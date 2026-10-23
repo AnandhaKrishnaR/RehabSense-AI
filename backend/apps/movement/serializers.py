@@ -2,16 +2,18 @@ from rest_framework import serializers
 from apps.movement.models import MovementMeasurement
 
 class MovementMeasurementSerializer(serializers.ModelSerializer):
-    exercise = serializers.CharField(write_only=True, required=False)
+    session_id = serializers.UUIDField(source='session.id', read_only=True)
+    stored_at = serializers.DateTimeField(source='created_at', read_only=True)
+    exercise = serializers.CharField(required=False)
 
     class Meta:
         model = MovementMeasurement
         fields = [
-            'id', 'session', 'captured_at', 'repetitions',
+            'id', 'session', 'session_id', 'captured_at', 'repetitions',
             'joint_angles', 'visibility', 'measurement_reliable',
-            'movement_checks', 'current_phase', 'created_at', 'exercise',
+            'movement_checks', 'current_phase', 'created_at', 'stored_at', 'exercise',
         ]
-        read_only_fields = ['id', 'session', 'created_at']
+        read_only_fields = ['id', 'session', 'session_id', 'created_at', 'stored_at']
 
     def validate_visibility(self, value):
         if not isinstance(value, dict):
@@ -34,3 +36,9 @@ class MovementMeasurementSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data.pop('exercise', None)
         return super().create(validated_data)
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if hasattr(instance, 'session') and instance.session:
+            ret['exercise'] = instance.session.exercise_id
+        return ret
