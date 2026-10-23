@@ -1,0 +1,3 @@
+@echo off
+echo Seeding RehabSense AI database with canonical exercises and demo records...
+call .venv\Scripts\python.exe backend\manage.py seed_demo_data
