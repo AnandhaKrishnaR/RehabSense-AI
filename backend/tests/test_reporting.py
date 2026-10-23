@@ -1,11 +1,16 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.contrib.auth.models import User
 from rest_framework import status
-from apps.rehabilitation.models import Exercise, RehabilitationSession
+from apps.rehabilitation.models import Exercise, RehabilitationSession, SymptomReport
 from apps.safety.models import ClinicianReviewFlag, ReviewResolutionAudit
 
 class ReportingAndClinicianReviewTests(TestCase):
     def setUp(self):
+        self.clinician_user = User.objects.create_user(username='clinician_doc', password='password123', is_staff=True)
+        self.patient1 = User.objects.create_user(username='patient1', password='password123')
+        self.patient2 = User.objects.create_user(username='patient2', password='password123')
+
         self.exercise = Exercise.objects.create(
             id='bodyweight_squat',
             name='Bodyweight Squat',
@@ -15,6 +20,8 @@ class ReportingAndClinicianReviewTests(TestCase):
             target_joints=['left_knee'],
         )
         self.session = RehabilitationSession.objects.create(
+            user=self.patient1,
+            patient_identifier='patient1',
             exercise=self.exercise,
             target_reps=10,
             completed_reps=8,
@@ -28,14 +35,22 @@ class ReportingAndClinicianReviewTests(TestCase):
             safety_feedback=['Patient reported pain.'],
         )
 
-    def test_get_clinician_reviews(self):
+    def test_get_clinician_reviews_as_clinician(self):
+        self.client.force_login(self.clinician_user)
         url = reverse('reporting:clinician-reviews-list')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['status'], 'pending')
 
+    def test_get_clinician_reviews_as_patient_denied(self):
+        self.client.force_login(self.patient1)
+        url = reverse('reporting:clinician-reviews-list')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_resolve_clinician_review(self):
+        self.client.force_login(self.clinician_user)
         url = reverse('reporting:clinician-review-resolve', kwargs={'review_id': self.flag.id})
         payload = {
             "clinician_notes": "Reviewed session. Target reps adjusted to 6.",
@@ -49,10 +64,12 @@ class ReportingAndClinicianReviewTests(TestCase):
         # Check flag updated in database
         self.flag.refresh_from_db()
         self.assertEqual(self.flag.status, 'resolved')
+        self.assertIsNotNone(self.flag.resolved_at)
         self.assertTrue(hasattr(self.flag, 'resolution'))
         self.assertEqual(self.flag.resolution.clinician_notes, "Reviewed session. Target reps adjusted to 6.")
 
     def test_get_progress_summary(self):
+        self.client.force_login(self.patient1)
         url = reverse('reporting:progress-summary')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -62,13 +79,18 @@ class ReportingAndClinicianReviewTests(TestCase):
         self.assertIn('shoulder_flexion', response.data['completed_exercises'])
 
     def test_get_session_csv_report(self):
+        self.client.force_login(self.patient1)
         url = f"{reverse('reporting:session-report', kwargs={'session_id': self.session.id})}?format=csv"
         response = self.client.get(url)
-        if response.status_code != 200:
-            print("CSV Test Failed. URL:", url, "Status:", response.status_code, "Content:", getattr(response, 'data', response.content))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('text/csv', response['Content-Type'])
         self.assertIn('attachment', response['Content-Disposition'])
         content = response.content.decode('utf-8')
         self.assertIn('Session ID', content)
         self.assertIn(str(self.session.id), content)
+
+    def test_get_session_report_other_patient_denied(self):
+        self.client.force_login(self.patient2)
+        url = reverse('reporting:session-report', kwargs={'session_id': self.session.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

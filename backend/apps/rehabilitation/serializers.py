@@ -12,34 +12,79 @@ class ExerciseSerializer(serializers.ModelSerializer):
 
 
 class TherapyPlanItemSerializer(serializers.ModelSerializer):
+    exercise_id = serializers.CharField(source='exercise.id')
     exercise_name = serializers.ReadOnlyField(source='exercise.name')
 
     class Meta:
         model = TherapyPlanItem
-        fields = ['id', 'exercise', 'exercise_name', 'target_sets', 'target_reps', 'notes']
+        fields = ['id', 'exercise_id', 'exercise_name', 'target_sets', 'target_reps', 'notes']
+
+    def validate_exercise_id(self, value):
+        if not Exercise.objects.filter(id=value, is_active=True).exists():
+            raise serializers.ValidationError(f"Invalid exercise ID '{value}'.")
+        return value
 
 
 class TherapyPlanSerializer(serializers.ModelSerializer):
-    items = TherapyPlanItemSerializer(many=True, read_only=True)
+    items = TherapyPlanItemSerializer(many=True, required=False)
+    patient_name = serializers.CharField(source='patient_identifier', required=False)
+    notes = serializers.CharField(source='diagnosis_notes', required=False, allow_blank=True)
 
     class Meta:
         model = TherapyPlan
         fields = [
-            'id', 'patient_identifier', 'clinician_name',
-            'diagnosis_notes', 'is_active', 'items', 'created_at',
+            'id', 'patient_name', 'patient_identifier', 'clinician_name',
+            'instructions', 'notes', 'diagnosis_notes', 'approval_status',
+            'is_approved', 'approved_at', 'is_active', 'items', 'created_at', 'updated_at',
         ]
+        read_only_fields = ['id', 'approved_at', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items', [])
+        # Plans created via API start in 'draft' status by default unless approved by clinician
+        if 'approval_status' not in validated_data:
+            validated_data['approval_status'] = 'draft'
+            validated_data['is_approved'] = False
+
+        plan = TherapyPlan.objects.create(**validated_data)
+
+        for item_data in items_data:
+            exercise_info = item_data.pop('exercise', {})
+            exercise_id = exercise_info.get('id') if isinstance(exercise_info, dict) else str(exercise_info)
+            exercise = Exercise.objects.get(id=exercise_id)
+            TherapyPlanItem.objects.create(
+                therapy_plan=plan,
+                exercise=exercise,
+                target_sets=item_data.get('target_sets', 3),
+                target_reps=item_data.get('target_reps', 10),
+                notes=item_data.get('notes', '')
+            )
+        return plan
 
 
 class CreateSessionSerializer(serializers.Serializer):
     exercise_id = serializers.CharField()
     therapy_plan_id = serializers.UUIDField(required=False, allow_null=True)
     target_reps = serializers.IntegerField(required=False, min_value=1, default=10)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
 
     def validate_exercise_id(self, value):
         if not Exercise.objects.filter(id=value, is_active=True).exists():
             raise serializers.ValidationError(
                 f"Invalid exercise ID '{value}'. Allowed: {list(Exercise.objects.values_list('id', flat=True))}"
             )
+        return value
+
+    def validate_therapy_plan_id(self, value):
+        if value:
+            try:
+                plan = TherapyPlan.objects.get(id=value)
+            except TherapyPlan.DoesNotExist:
+                raise serializers.ValidationError(f"Therapy plan with ID '{value}' does not exist.")
+            if not plan.is_approved:
+                raise serializers.ValidationError(
+                    "Therapy plan has not been approved by a clinician. Only approved plans may be assigned to active rehabilitation sessions."
+                )
         return value
 
 
@@ -51,7 +96,7 @@ class RehabilitationSessionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'patient_identifier', 'therapy_plan', 'exercise',
             'exercise_name', 'status', 'target_reps', 'completed_reps',
-            'started_at', 'ended_at', 'review_required', 'summary_metrics',
+            'notes', 'started_at', 'ended_at', 'review_required', 'summary_metrics',
         ]
 
 
@@ -63,7 +108,7 @@ class SymptomReportSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'session', 'reported_at', 'transcript',
             'language', 'pain_score', 'difficulty', 'body_area',
-            'patient_confirmed', 'extraction_metadata',
+            'extraction_status', 'patient_confirmed', 'extraction_metadata',
         ]
         read_only_fields = ['id', 'session', 'reported_at']
 
@@ -71,4 +116,3 @@ class SymptomReportSerializer(serializers.ModelSerializer):
         if value is not None and (value < 0 or value > 10):
             raise serializers.ValidationError("Pain score must be between 0 and 10.")
         return value
-
