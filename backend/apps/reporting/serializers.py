@@ -14,6 +14,8 @@ class ClinicianReviewFlagSerializer(serializers.ModelSerializer):
     completed_reps = serializers.ReadOnlyField(source='session.completed_reps')
     target_reps = serializers.ReadOnlyField(source='session.target_reps')
     resolution = ReviewResolutionAuditSerializer(read_only=True)
+    latest_pain_score = serializers.SerializerMethodField()
+    measurements_count = serializers.SerializerMethodField()
 
     class Meta:
         model = ClinicianReviewFlag
@@ -21,4 +23,12 @@ class ClinicianReviewFlagSerializer(serializers.ModelSerializer):
             'id', 'session_id', 'patient_identifier', 'exercise',
             'created_at', 'status', 'severity', 'flag_reasons',
             'safety_feedback', 'completed_reps', 'target_reps', 'resolution',
+            'latest_pain_score', 'measurements_count',
         ]
+
+    def get_latest_pain_score(self, obj):
+        latest = obj.session.symptoms.filter(pain_score__isnull=False).order_by('-reported_at').first()
+        return latest.pain_score if latest else None
+
+    def get_measurements_count(self, obj):
+        return obj.session.measurements.count()

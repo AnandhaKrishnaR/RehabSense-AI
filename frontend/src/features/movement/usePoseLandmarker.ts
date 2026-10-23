@@ -8,10 +8,11 @@ import { Landmark } from './geometry';
 export interface UsePoseLandmarkerOptions {
   exerciseId: CanonicalExerciseId;
   onMovementResult?: (result: MovementResult) => void;
+  onLandmarks?: (landmarks: Landmark[] | null) => void;
   enabled?: boolean;
 }
 
-export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true }: UsePoseLandmarkerOptions) {
+export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, enabled = true }: UsePoseLandmarkerOptions) {
   const [isModelLoading, setIsModelLoading] = useState(true);
   const [modelError, setModelError] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -87,10 +88,14 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true
 
   // Frame processing loop
   const processFrame = useCallback(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      onLandmarks?.(null);
+      return;
+    }
 
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
+    let currentLandmarks: Landmark[] | null = null;
 
     if (landmarker && video && video.readyState >= 2 && !isSimulated) {
       try {
@@ -99,6 +104,7 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true
 
         if (results.landmarks && results.landmarks.length > 0) {
           const rawLandmarks = results.landmarks[0] as Landmark[];
+          currentLandmarks = rawLandmarks;
           let res: MovementResult;
 
           if (exerciseId === 'bodyweight_squat') {
@@ -134,6 +140,7 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true
         dummyLandmarks[26] = { x: 0.5, y: 0.65, visibility: 0.95 };
         dummyLandmarks[27] = { x: 0.5 + Math.sin(Math.PI - rad) * 0.2, y: 0.65 + Math.cos(Math.PI - rad) * 0.2, visibility: 0.95 };
         dummyLandmarks[28] = { ...dummyLandmarks[27] };
+        currentLandmarks = dummyLandmarks;
 
         res = squatTrackerRef.current.processFrame(dummyLandmarks);
       } else {
@@ -147,6 +154,7 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true
         dummyLandmarks[12] = { x: 0.5, y: 0.4, visibility: 0.95 };
         dummyLandmarks[13] = { x: 0.5 + Math.sin(rad) * 0.25, y: 0.4 + Math.cos(rad) * 0.25, visibility: 0.95 };
         dummyLandmarks[14] = { ...dummyLandmarks[13] };
+        currentLandmarks = dummyLandmarks;
 
         res = shoulderTrackerRef.current.processFrame(dummyLandmarks);
       }
@@ -155,8 +163,9 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true
       onMovementResult?.(res);
     }
 
+    onLandmarks?.(currentLandmarks);
     requestRef.current = requestAnimationFrame(processFrame);
-  }, [enabled, exerciseId, isSimulated, onMovementResult]);
+  }, [enabled, exerciseId, isSimulated, onLandmarks, onMovementResult]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(processFrame);
@@ -185,6 +194,7 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, enabled = true
   };
 
   const stopCamera = () => {
+    onLandmarks?.(null);
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
