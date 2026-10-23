@@ -2,6 +2,7 @@ import {
   HealthResponse,
   ExerciseDefinition,
   TherapyPlan,
+  TherapyPlanItem,
   SessionRecord,
   CreateSessionPayload,
   SymptomReportPayload,
@@ -117,6 +118,27 @@ class ApiClient {
       const found = DEMO_EXERCISES.find((e) => e.id === id);
       if (!found) throw new Error(`Exercise ${id} not found`);
       return found;
+    }
+  }
+
+  public async createTherapyPlan(payload: {
+    patient_name: string;
+    clinician_name: string;
+    notes: string;
+    items: TherapyPlanItem[];
+  }): Promise<TherapyPlan> {
+    try {
+      return await this.request<TherapyPlan>('/therapy-plans/', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      return {
+        id: `demo-plan-${Date.now()}`,
+        ...payload,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      };
     }
   }
 
