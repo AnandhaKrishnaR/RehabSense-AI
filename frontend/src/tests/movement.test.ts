@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { calculateAngle, checkVisibility, Landmark } from '../features/movement/geometry';
 import { SquatTracker } from '../features/movement/squatTracker';
 import { ShoulderFlexionTracker } from '../features/movement/shoulderFlexionTracker';
-import { getMovementCoachMessage, MOVEMENT_COACH_MESSAGES } from '../features/voice/movementVoiceCoach';
+import { getMovementCoachMessage, getMovementCoachStartMessage, MOVEMENT_COACH_MESSAGES } from '../features/voice/movementVoiceCoach';
 
 describe('Movement Geometry and Calculations', () => {
   it('calculates a 90-degree right angle accurately', () => {
@@ -163,6 +163,21 @@ describe('ShoulderFlexionTracker State Machine', () => {
     it('announces exercise setup instructions', () => {
       expect(MOVEMENT_COACH_MESSAGES.bodyweight_squat.start).toContain('കാലുകൾ');
       expect(MOVEMENT_COACH_MESSAGES.shoulder_flexion.start).toContain('കൈ');
+    });
+
+    it('uses English cues when English speech is selected', () => {
+      expect(getMovementCoachStartMessage('bodyweight_squat', 'en-IN')).toContain('Let us begin');
+      expect(getMovementCoachMessage(
+        'shoulder_flexion',
+        'eccentric',
+        0,
+        'idle',
+        0,
+        true,
+        [],
+        {},
+        'en-IN',
+      )).toContain('Raise your arm slowly');
     });
 
     it('announces phase transitions and completed repetitions', () => {

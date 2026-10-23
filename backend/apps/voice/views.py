@@ -15,15 +15,6 @@ from apps.voice.services.sarvam_service import (
     SarvamTimeoutError,
     SarvamServiceUnavailableError,
 )
-from apps.voice.services.gemini_tts_service import (
-    GeminiTTSAuthenticationError,
-    GeminiTTSConfigurationError,
-    GeminiTTSRateLimitError,
-    GeminiTTSTimeoutError,
-    GeminiTTSValidationError,
-    GeminiTTSServiceError,
-    GeminiTTSService,
-)
 from apps.voice.services.tts_language import (
     SUPPORTED_SPEECH_LANGUAGES,
     SUPPORTED_TEXT_LANGUAGES,
@@ -140,48 +131,36 @@ class VoiceSpeakView(APIView):
         text_language = request.data.get('text_language', 'auto')
         configured_tts_provider = (
             getattr(settings, 'MALAYALAM_TTS_PROVIDER', None)
-            or getattr(settings, 'TTS_PROVIDER', 'gemini')
+            or getattr(settings, 'TTS_PROVIDER', 'sarvam')
         )
         provider = request.data.get('provider', configured_tts_provider)
         voice = request.data.get('voice', request.data.get('speaker'))
         segment = request.data.get('segment', False)
         preview = request.query_params.get('preview', '').lower() in ('true', '1') or request.data.get('preview', False)
 
-        if provider not in ('gemini', 'sarvam', 'mock', 'gtts'):
+        if provider != 'sarvam':
             return Response(
-                {"error": "invalid_provider", "detail": "Choose Gemini, Sarvam, or Mock TTS."},
+                {"error": "invalid_provider", "detail": "Sarvam is the only supported TTS provider."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if provider == 'gemini':
-            model = getattr(settings, 'GEMINI_TTS_MODEL', 'gemini-3.8-flash-tts')
-        elif provider == 'sarvam':
-            model = getattr(settings, 'SARVAM_TTS_MODEL', 'bulbul:v3')
-        else:
-            model = provider
+        model = getattr(settings, 'SARVAM_TTS_MODEL', 'bulbul:v3')
 
-        if provider in ('gemini', 'sarvam'):
-            try:
-                compatibility = check_tts_compatibility(text, text_language, speech_language, provider, model)
-            except ValueError as e:
-                return Response({"error": "invalid_language", "detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-            if not compatibility['compatible']:
-                return Response({
-                    "error": "language_incompatible",
-                    "detail": compatibility['warning'],
-                    "original_text": text,
-                    "text_sent": text,
-                    "text_language": text_language,
-                    "speech_language": speech_language,
-                    "detected_text_language": compatibility['detected_text_language'],
-                    "compatible": False,
-                }, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        else:
-            compatibility = {
-                "compatible": True,
-                "detected_text_language": speech_language,
-                "warning": "",
-            }
+        try:
+            compatibility = check_tts_compatibility(text, text_language, speech_language, provider, model)
+        except ValueError as e:
+            return Response({"error": "invalid_language", "detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        if not compatibility['compatible']:
+            return Response({
+                "error": "language_incompatible",
+                "detail": compatibility['warning'],
+                "original_text": text,
+                "text_sent": text,
+                "text_language": text_language,
+                "speech_language": speech_language,
+                "detected_text_language": compatibility['detected_text_language'],
+                "compatible": False,
+            }, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         if preview:
             return Response({
@@ -195,7 +174,7 @@ class VoiceSpeakView(APIView):
                 "warning": compatibility['warning'],
                 "provider": provider,
                 "model": model,
-                "voice": voice or (settings.GEMINI_TTS_VOICE if provider == 'gemini' else getattr(settings, 'SARVAM_TTS_SPEAKER', 'shubh')),
+                "voice": voice or getattr(settings, 'SARVAM_TTS_SPEAKER', 'shubh'),
                 "output_audio_codec": "audio/wav",
                 "preview_only": True,
             }, status=status.HTTP_200_OK)
@@ -226,36 +205,6 @@ class VoiceSpeakView(APIView):
                 "compatible": True,
             })
             return Response(result, status=status.HTTP_200_OK)
-        except GeminiTTSValidationError as e:
-            return Response(
-                {"error": "validation_error", "detail": str(e), "fallback_text": text},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except GeminiTTSAuthenticationError as e:
-            return Response(
-                {"error": "authentication_error", "detail": str(e), "fallback_text": text},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-        except GeminiTTSRateLimitError as e:
-            return Response(
-                {"error": "rate_limited", "detail": str(e), "fallback_text": text},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-        except GeminiTTSTimeoutError as e:
-            return Response(
-                {"error": "timeout", "detail": str(e), "fallback_text": text},
-                status=status.HTTP_504_GATEWAY_TIMEOUT,
-            )
-        except GeminiTTSConfigurationError as e:
-            return Response(
-                {"error": "service_unavailable", "detail": str(e), "fallback_text": text},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-        except GeminiTTSServiceError as e:
-            return Response(
-                {"error": "service_error", "detail": str(e), "fallback_text": text},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
         except SarvamValidationError as e:
             return Response(
                 {"error": "validation_error", "detail": str(e), "fallback_text": text},
@@ -299,16 +248,17 @@ class VoiceCompatibilityView(APIView):
     def post(self, request):
         text = request.data.get('text')
         text_language = request.data.get('text_language', 'auto')
-        speech_language = request.data.get('speech_language')
+        raw_lang = request.data.get('speech_language', 'ml-IN')
+        speech_language = 'ml-IN' if raw_lang in ('ml', 'ml-IN') else ('en-IN' if raw_lang in ('en', 'en-IN') else raw_lang)
         provider = request.data.get('provider', settings.TTS_PROVIDER)
         if not isinstance(text, str) or not text.strip():
             return Response({"error": "validation_error", "detail": "text is required."}, status=status.HTTP_400_BAD_REQUEST)
-        if provider not in ('gemini', 'sarvam'):
-            return Response({"error": "invalid_provider", "detail": "Choose Gemini or Sarvam TTS."}, status=status.HTTP_400_BAD_REQUEST)
+        if provider != 'sarvam':
+            return Response({"error": "invalid_provider", "detail": "Sarvam is the only supported TTS provider."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             result = check_tts_compatibility(
                 text, text_language, speech_language, provider,
-                settings.GEMINI_TTS_MODEL if provider == 'gemini' else settings.SARVAM_TTS_MODEL,
+                settings.SARVAM_TTS_MODEL,
             )
         except ValueError as e:
             return Response({"error": "invalid_language", "detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -320,35 +270,20 @@ class VoiceOptionsView(APIView):
 
     def get(self, request):
         provider = request.query_params.get('provider', settings.TTS_PROVIDER)
-        speech_language = request.query_params.get('speech_language', 'ml-IN')
-        if provider not in ('gemini', 'sarvam'):
-            return Response({"error": "invalid_provider", "detail": "Choose Gemini or Sarvam TTS."}, status=status.HTTP_400_BAD_REQUEST)
+        raw_lang = request.query_params.get('speech_language', 'ml-IN')
+        speech_language = 'ml-IN' if raw_lang in ('ml', 'ml-IN') else ('en-IN' if raw_lang in ('en', 'en-IN') else raw_lang)
+        if provider != 'sarvam':
+            return Response({"error": "invalid_provider", "detail": "Sarvam is the only supported TTS provider."}, status=status.HTTP_400_BAD_REQUEST)
         if speech_language not in SUPPORTED_SPEECH_LANGUAGES:
             return Response({"error": "invalid_language", "detail": "speech_language must be en-IN or ml-IN."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            if provider == 'gemini':
-                voices = GeminiTTSService().list_voices(speech_language)
-                model = settings.GEMINI_TTS_MODEL
-            else:
-                voices = get_sarvam_v3_voice_options(speech_language)
-                model = settings.SARVAM_TTS_MODEL
-            return Response({
-                "provider": provider,
-                "speech_language": speech_language,
-                "model": model,
-                "voices": voices,
-            })
-        except GeminiTTSConfigurationError as e:
-            return Response({"error": "service_unavailable", "detail": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        except GeminiTTSAuthenticationError as e:
-            return Response({"error": "authentication_error", "detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
-        except GeminiTTSRateLimitError as e:
-            return Response({"error": "rate_limited", "detail": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-        except GeminiTTSTimeoutError as e:
-            return Response({"error": "timeout", "detail": str(e)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-        except GeminiTTSServiceError as e:
-            return Response({"error": "voice_list_error", "detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+        voices = get_sarvam_v3_voice_options(speech_language)
+        return Response({
+            "provider": provider,
+            "speech_language": speech_language,
+            "model": settings.SARVAM_TTS_MODEL,
+            "voices": voices,
+        })
 
 
 class VoiceTemplatesView(APIView):
@@ -409,7 +344,7 @@ class VoiceEvaluationView(APIView):
 
     def post(self, request):
         data = request.data
-        provider = data.get("provider", "gemini")
+        provider = data.get("provider", "sarvam")
         speech_language = data.get("speech_language", "ml-IN")
         voice = data.get("voice", "")
         sentence = data.get("sentence", "").strip()
@@ -417,6 +352,11 @@ class VoiceEvaluationView(APIView):
         if not sentence:
             return Response(
                 {"error": "validation_error", "detail": "sentence is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if provider != 'sarvam':
+            return Response(
+                {"error": "invalid_provider", "detail": "Sarvam is the only supported TTS provider."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

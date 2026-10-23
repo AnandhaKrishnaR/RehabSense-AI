@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Volume2, Play, Pause, Square, RotateCcw, CheckCircle, AlertCircle, Award, Star, SplitSquareVertical } from 'lucide-react';
+import { Volume2, Play, Pause, RotateCcw, CheckCircle, AlertCircle, Star } from 'lucide-react';
 import { apiClient } from '../../services/apiClient';
 import {
-  TTSProviderName,
   VoiceLanguageCode,
   TTSVoiceOption,
   VoiceEvaluationEntry,
@@ -13,22 +12,6 @@ export function VoiceEvaluationLab() {
   const [speechLanguage, setSpeechLanguage] = useState<VoiceLanguageCode>('ml-IN');
   const [selectedPresetIndex, setSelectedPresetIndex] = useState<number>(0);
   const [customText, setCustomText] = useState<string>('');
-  const [comparisonMode, setComparisonMode] = useState<boolean>(true);
-
-  // Single mode state
-  const [singleProvider, setSingleProvider] = useState<TTSProviderName>('gemini');
-  const [singleVoice, setSingleVoice] = useState<string>('Kore');
-  const [singleVoices, setSingleVoices] = useState<TTSVoiceOption[]>([]);
-  const [singleAudio, setSingleAudio] = useState<HTMLAudioElement | null>(null);
-  const [singleLoading, setSingleLoading] = useState(false);
-  const [singlePlaying, setSinglePlaying] = useState(false);
-
-  // Comparison mode state
-  const [geminiVoice, setGeminiVoice] = useState<string>('Kore');
-  const [geminiVoices, setGeminiVoices] = useState<TTSVoiceOption[]>([]);
-  const [geminiAudio, setGeminiAudio] = useState<HTMLAudioElement | null>(null);
-  const [geminiLoading, setGeminiLoading] = useState(false);
-  const [geminiPlaying, setGeminiPlaying] = useState(false);
 
   const [sarvamVoice, setSarvamVoice] = useState<string>('shubh');
   const [sarvamVoices, setSarvamVoices] = useState<TTSVoiceOption[]>([]);
@@ -39,7 +22,6 @@ export function VoiceEvaluationLab() {
   // Evaluation presets & history
   const [presetsData, setPresetsData] = useState<VoiceEvaluationResponse | null>(null);
   const [evaluations, setEvaluations] = useState<VoiceEvaluationEntry[]>([]);
-  const [activeEvaluatorProvider, setActiveEvaluatorProvider] = useState<TTSProviderName>('gemini');
 
   // Scoring rubric form (1-5)
   const [scores, setScores] = useState({
@@ -62,18 +44,6 @@ export function VoiceEvaluationLab() {
       }
     });
   }, []);
-
-  // Fetch Gemini voices
-  useEffect(() => {
-    apiClient.getTTSVoiceOptions('gemini', speechLanguage)
-      .then((res) => {
-        setGeminiVoices(res.voices);
-        if (res.voices.length > 0 && !res.voices.some((v) => v.id === geminiVoice)) {
-          setGeminiVoice(res.voices[0].id);
-        }
-      })
-      .catch(() => {});
-  }, [speechLanguage]);
 
   // Fetch Sarvam voices
   useEffect(() => {
@@ -110,54 +80,6 @@ export function VoiceEvaluationLab() {
     audio.play().catch(() => onPlayState(false));
   };
 
-  // Generate for single provider
-  const handleSingleGenerate = async () => {
-    if (!activeSentence) return;
-    setSingleLoading(true);
-    setStatusMessage('');
-    try {
-      if (singleAudio) {
-        singleAudio.pause();
-      }
-      const res = await apiClient.speakText(activeSentence, speechLanguage, {
-        provider: singleProvider,
-        voice: singleVoice,
-        textLanguage: speechLanguage,
-      });
-      if (res.audio_base64) {
-        playAudioBase64(res.audio_base64, res.mime_type || 'audio/wav', setSinglePlaying, setSingleAudio);
-      } else {
-        setStatusMessage('No audio data received from provider.');
-      }
-    } catch (err: any) {
-      setStatusMessage(err.message || 'Generation failed.');
-    } finally {
-      setSingleLoading(false);
-    }
-  };
-
-  // Generate Gemini audio
-  const handleGeminiGenerate = async () => {
-    if (!activeSentence) return;
-    setGeminiLoading(true);
-    setStatusMessage('');
-    try {
-      if (geminiAudio) geminiAudio.pause();
-      const res = await apiClient.speakText(activeSentence, speechLanguage, {
-        provider: 'gemini',
-        voice: geminiVoice,
-        textLanguage: speechLanguage,
-      });
-      if (res.audio_base64) {
-        playAudioBase64(res.audio_base64, res.mime_type || 'audio/wav', setGeminiPlaying, setGeminiAudio);
-      }
-    } catch (err: any) {
-      setStatusMessage(`Gemini: ${err.message || 'Failed to generate audio.'}`);
-    } finally {
-      setGeminiLoading(false);
-    }
-  };
-
   // Generate Sarvam audio
   const handleSarvamGenerate = async () => {
     if (!activeSentence) return;
@@ -184,9 +106,9 @@ export function VoiceEvaluationLab() {
   const handleSubmitEvaluation = async (e: React.FormEvent) => {
     e.preventDefault();
     const entry: VoiceEvaluationEntry = {
-      provider: activeEvaluatorProvider,
+      provider: 'sarvam',
       speech_language: speechLanguage,
-      voice: activeEvaluatorProvider === 'gemini' ? geminiVoice : sarvamVoice,
+      voice: sarvamVoice,
       sentence: activeSentence,
       pronunciation_score: scores.pronunciation_score,
       naturalness_score: scores.naturalness_score,
@@ -215,24 +137,8 @@ export function VoiceEvaluationLab() {
             <Volume2 color="#0284c7" /> AI Voice Quality Evaluation & Testing Lab
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: '0.25rem 0 0' }}>
-            Listen, compare, and clinically rate Malayalam and Indian English speech generated by Google Gemini TTS vs Sarvam AI Bulbul v3.
+            Listen to and clinically rate Malayalam and Indian English speech generated by Sarvam AI Bulbul v3.
           </p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button
-            className={`btn ${comparisonMode ? 'btn-primary' : 'btn-outline'}`}
-            style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
-            onClick={() => setComparisonMode(true)}
-          >
-            <SplitSquareVertical size={16} /> Side-by-Side Comparison
-          </button>
-          <button
-            className={`btn ${!comparisonMode ? 'btn-primary' : 'btn-outline'}`}
-            style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
-            onClick={() => setComparisonMode(false)}
-          >
-            <Award size={16} /> Single Voice Mode
-          </button>
         </div>
       </div>
 
@@ -317,153 +223,48 @@ export function VoiceEvaluationLab() {
         </div>
       </div>
 
-      {/* Side-by-Side Comparison UI */}
-      {comparisonMode ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
-          {/* Provider 1: Gemini TTS */}
-          <div className="card" style={{ padding: '1.25rem', borderTop: '4px solid #0284c7' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h3 style={{ fontSize: '1.05rem', margin: 0, fontWeight: 700, color: '#0284c7' }}>
-                Google Gemini TTS
-              </h3>
-              <span className="badge badge-primary">gemini-3.8-flash-tts</span>
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>
-              Google GenAI speech generation with expressive medical pacing.
-            </p>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.82rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>
-                Gemini Voice:
-              </label>
-              <select
-                value={geminiVoice}
-                onChange={(e) => setGeminiVoice(e.target.value)}
-                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)' }}
-              >
-                {geminiVoices.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                className="btn btn-primary"
-                onClick={handleGeminiGenerate}
-                disabled={geminiLoading || !activeSentence}
-                style={{ flex: 1, padding: '0.5rem' }}
-              >
-                {geminiLoading ? 'Synthesizing...' : geminiPlaying ? <><Pause size={16} /> Playing</> : <><Play size={16} /> Listen to Gemini</>}
-              </button>
-              {geminiAudio && (
-                <button
-                  className="btn btn-outline"
-                  onClick={() => { geminiAudio.currentTime = 0; geminiAudio.play(); }}
-                  title="Replay"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Provider 2: Sarvam AI Bulbul v3 */}
-          <div className="card" style={{ padding: '1.25rem', borderTop: '4px solid #0d9488' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h3 style={{ fontSize: '1.05rem', margin: 0, fontWeight: 700, color: '#0d9488' }}>
-                Sarvam AI TTS
-              </h3>
-              <span className="badge badge-success">bulbul:v3</span>
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>
-              Specialized Indian language model with regional Kerala Malayalam phonetic tuning.
-            </p>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.82rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>
-                Sarvam Speaker:
-              </label>
-              <select
-                value={sarvamVoice}
-                onChange={(e) => setSarvamVoice(e.target.value)}
-                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)' }}
-              >
-                {sarvamVoices.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                className="btn btn-primary"
-                onClick={handleSarvamGenerate}
-                disabled={sarvamLoading || !activeSentence}
-                style={{ flex: 1, padding: '0.5rem', background: '#0d9488', borderColor: '#0d9488' }}
-              >
-                {sarvamLoading ? 'Synthesizing...' : sarvamPlaying ? <><Pause size={16} /> Playing</> : <><Play size={16} /> Listen to Sarvam</>}
-              </button>
-              {sarvamAudio && (
-                <button
-                  className="btn btn-outline"
-                  onClick={() => { sarvamAudio.currentTime = 0; sarvamAudio.play(); }}
-                  title="Replay"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              )}
-            </div>
-          </div>
+      <div className="card" style={{ padding: '1.25rem', marginBottom: '1.5rem', borderTop: '4px solid #0d9488' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h3 style={{ fontSize: '1.05rem', margin: 0, fontWeight: 700, color: '#0d9488' }}>
+            Sarvam AI TTS
+          </h3>
+          <span className="badge badge-success">bulbul:v3</span>
         </div>
-      ) : (
-        /* Single Voice Mode UI */
-        <div className="card" style={{ padding: '1.25rem', marginBottom: '1.5rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Provider:</label>
-              <select
-                value={singleProvider}
-                onChange={(e) => setSingleProvider(e.target.value as TTSProviderName)}
-                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)' }}
-              >
-                <option value="gemini">Google Gemini TTS (gemini-3.8-flash-tts)</option>
-                <option value="sarvam">Sarvam AI (bulbul:v3)</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>Voice / Speaker:</label>
-              <select
-                value={singleVoice}
-                onChange={(e) => setSingleVoice(e.target.value)}
-                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)' }}
-              >
-                {(singleProvider === 'gemini' ? geminiVoices : sarvamVoices).map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>
+          Regional speech synthesis for Malayalam and Indian English.
+        </p>
+        <label style={{ fontSize: '0.82rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem' }}>
+          Sarvam Speaker:
+        </label>
+        <select
+          value={sarvamVoice}
+          onChange={(e) => setSarvamVoice(e.target.value)}
+          style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '1rem' }}
+        >
+          {sarvamVoices.map((voice) => (
+            <option key={voice.id} value={voice.id}>{voice.label}</option>
+          ))}
+        </select>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            className="btn btn-primary"
+            onClick={handleSarvamGenerate}
+            disabled={sarvamLoading || !activeSentence}
+            style={{ flex: 1, padding: '0.5rem', background: '#0d9488', borderColor: '#0d9488' }}
+          >
+            {sarvamLoading ? 'Synthesizing...' : sarvamPlaying ? <><Pause size={16} /> Playing</> : <><Play size={16} /> Listen to Sarvam</>}
+          </button>
+          {sarvamAudio && (
             <button
-              className="btn btn-primary"
-              onClick={handleSingleGenerate}
-              disabled={singleLoading || !activeSentence}
-              style={{ padding: '0.5rem 1.25rem' }}
+              className="btn btn-outline"
+              onClick={() => { sarvamAudio.currentTime = 0; sarvamAudio.play(); }}
+              title="Replay"
             >
-              {singleLoading ? 'Generating...' : singlePlaying ? <><Pause size={16} /> Pause</> : <><Play size={16} /> Generate & Listen</>}
+              <RotateCcw size={16} />
             </button>
-            {singleAudio && (
-              <button
-                className="btn btn-outline"
-                onClick={() => { singleAudio.currentTime = 0; singleAudio.play(); }}
-              >
-                <RotateCcw size={16} /> Replay
-              </button>
-            )}
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Clinician & Developer Evaluation Form */}
       <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem', background: '#fafafa' }}>
@@ -475,27 +276,9 @@ export function VoiceEvaluationLab() {
         </p>
 
         <form onSubmit={handleSubmitEvaluation}>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
-            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Rating for Provider:</label>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                type="button"
-                className={`btn ${activeEvaluatorProvider === 'gemini' ? 'btn-primary' : 'btn-outline'}`}
-                style={{ fontSize: '0.85rem', padding: '0.3rem 0.75rem' }}
-                onClick={() => setActiveEvaluatorProvider('gemini')}
-              >
-                Google Gemini ({geminiVoice})
-              </button>
-              <button
-                type="button"
-                className={`btn ${activeEvaluatorProvider === 'sarvam' ? 'btn-primary' : 'btn-outline'}`}
-                style={{ fontSize: '0.85rem', padding: '0.3rem 0.75rem', ...(activeEvaluatorProvider === 'sarvam' ? { background: '#0d9488', borderColor: '#0d9488' } : {}) }}
-                onClick={() => setActiveEvaluatorProvider('sarvam')}
-              >
-                Sarvam AI ({sarvamVoice})
-              </button>
-            </div>
-          </div>
+          <p style={{ fontSize: '0.85rem', fontWeight: 600, margin: '0 0 1rem' }}>
+            Rating provider: Sarvam AI ({sarvamVoice})
+          </p>
 
           {/* 5-Criteria Rubric */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>

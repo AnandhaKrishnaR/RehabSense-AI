@@ -6,9 +6,10 @@ import { PhysiotherapyAvatar } from '../avatar/PhysiotherapyAvatar';
 import { usePoseLandmarker } from '../movement/usePoseLandmarker';
 import { MalayalamVoiceDialog } from '../voice/MalayalamVoiceDialog';
 import { VoiceSettingsPanel } from '../voice/VoiceSettingsPanel';
+import { loadVoicePreferences } from '../voice/voicePreferences';
 import {
+  getMovementCoachStartMessage,
   getMovementCoachMessage,
-  MOVEMENT_COACH_MESSAGES,
   movementResultHasChanged,
   speakMalayalam,
 } from '../voice/movementVoiceCoach';
@@ -82,6 +83,7 @@ export function ExerciseSessionView() {
         result.measurement_reliable,
         result.movement_checks,
         voiceTemplates,
+        loadVoicePreferences().speechLanguage,
       );
       const now = Date.now();
       if (message && now - lastCoachMessageAtRef.current >= 1500) {
@@ -117,9 +119,12 @@ export function ExerciseSessionView() {
   // Start new exercise session
   const startSession = async () => {
     setVoicePlaybackError(false);
-    // Speak start instructions aloud in Malayalam voice immediately
-    const startTemplateKey = selectedExerciseId === 'bodyweight_squat' ? 'squat_start' : 'shoulder_start';
-    speakMalayalam(voiceTemplates[startTemplateKey]?.text || MOVEMENT_COACH_MESSAGES[selectedExerciseId].start);
+    const preferences = loadVoicePreferences();
+    speakMalayalam(getMovementCoachStartMessage(
+      selectedExerciseId,
+      preferences.speechLanguage,
+      voiceTemplates,
+    ));
 
     try {
       const sess = await apiClient.createSession({
@@ -180,10 +185,12 @@ export function ExerciseSessionView() {
         if (evaluation.review_required) {
           setSafetyAlert(evaluation);
           setSessionPaused(true);
-          // Speak pause-and-rest guidance aloud in Malayalam
-          const safetyVoiceMsg = voiceTemplates.safety_pause_pain?.text
-            || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.';
-          speakMalayalam(safetyVoiceMsg);
+          const preferences = loadVoicePreferences();
+          const safetyVoiceMsg = preferences.speechLanguage === 'en-IN'
+            ? 'Stop the exercise and follow your physiotherapist instructions.'
+            : voiceTemplates.safety_pause_pain?.text
+              || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.';
+          speakMalayalam(safetyVoiceMsg, false, { textLanguage: preferences.speechLanguage });
         }
       });
     }
@@ -193,7 +200,7 @@ export function ExerciseSessionView() {
     <div>
       {voicePlaybackError && (
         <div role="alert" style={{ marginBottom: '0.75rem', color: '#991b1b' }}>
-          Malayalam audio could not be played. Check Sarvam connectivity or an available browser Malayalam voice.
+          Voice audio could not be played. Check the configured speech provider or an available browser voice.
         </div>
       )}
       {/* Exercise Selection Header */}
@@ -280,8 +287,14 @@ export function ExerciseSessionView() {
             type="button"
             className="btn btn-danger"
             style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-            onClick={() => speakMalayalam(voiceTemplates.safety_pause_pain?.text
-              || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.')}
+            onClick={() => {
+              const preferences = loadVoicePreferences();
+              const safetyVoiceMsg = preferences.speechLanguage === 'en-IN'
+                ? 'Stop the exercise and follow your physiotherapist instructions.'
+                : voiceTemplates.safety_pause_pain?.text
+                  || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.';
+              speakMalayalam(safetyVoiceMsg, false, { textLanguage: preferences.speechLanguage });
+            }}
           >
             <Volume2 size={16} /> Listen to Audio
           </button>
@@ -318,8 +331,17 @@ export function ExerciseSessionView() {
                 type="button"
                 className="btn btn-outline"
                 style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
-                onClick={() => speakMalayalam(selectedExercise.instructions_ml)}
-                title="Listen to Malayalam Instructions"
+                onClick={() => {
+                  const preferences = loadVoicePreferences();
+                  speakMalayalam(
+                    preferences.speechLanguage === 'en-IN'
+                      ? selectedExercise.instructions_en
+                      : selectedExercise.instructions_ml,
+                    false,
+                    { textLanguage: preferences.speechLanguage },
+                  );
+                }}
+                title="Listen to exercise instructions"
               >
                 <Volume2 size={13} color="#0284c7" /> Listen to Audio
               </button>

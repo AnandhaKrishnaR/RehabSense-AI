@@ -19,7 +19,6 @@ from apps.voice.services.sarvam_service import (
     SarvamTimeoutError,
     SarvamServiceUnavailableError,
 )
-from apps.voice.services.gemini_tts_service import GeminiTTSService
 
 
 class BaseSTTProvider(ABC):
@@ -294,28 +293,6 @@ class SarvamTTSProvider(BaseTTSProvider):
         )
 
 
-class GeminiTTSProvider(BaseTTSProvider):
-    """Google Gemini TTS; deliberately independent from the configured STT provider."""
-
-    def __init__(self, service: Optional[GeminiTTSService] = None):
-        self.service = service or GeminiTTSService()
-
-    def synthesize(self, text, language='ml-IN', speaker=None, prepare_text=False, segment=False, **kwargs):
-        if segment:
-            return self.service.synthesize_segments(
-                text=text,
-                voice=speaker,
-                prepare_text=False,
-                speech_language=language,
-            )
-        return self.service.synthesize(
-            text=text,
-            voice=speaker,
-            prepare_text=False,
-            speech_language=language,
-        )
-
-
 class MockSTTProvider(BaseSTTProvider):
     """
     Deterministic mock adapter for development and offline testing.
@@ -555,8 +532,8 @@ def get_voice_adapter(
 
     active_tts_provider = (
         tts_provider_name
-        or getattr(settings, 'MALAYALAM_TTS_PROVIDER', 'gemini')
-        or 'gemini'
+        or getattr(settings, 'MALAYALAM_TTS_PROVIDER', 'sarvam')
+        or 'sarvam'
     ).lower().strip()
     if active_tts_provider == 'sarvam':
         tts = SarvamTTSProvider()
@@ -565,6 +542,6 @@ def get_voice_adapter(
     elif active_tts_provider == 'mock':
         tts = MockTTSProvider()
     else:
-        tts = GeminiTTSProvider()
+        raise ValueError('Unsupported TTS provider; use Sarvam.')
 
     return VoiceAdapterFacade(stt, tts, extractor)

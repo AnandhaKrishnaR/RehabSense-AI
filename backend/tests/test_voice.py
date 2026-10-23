@@ -55,14 +55,32 @@ class VoiceEndpointTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data.get('error'), 'unsupported_audio_format')
 
-    @override_settings(MALAYALAM_TTS_PROVIDER='mock')
-    def test_speak_endpoint_returns_audio_and_fallback_text(self):
+    @patch('apps.voice.adapters.SarvamTTSProvider.synthesize')
+    def test_speak_endpoint_returns_sarvam_audio_and_fallback_text(self, mock_synthesize):
+        mock_synthesize.return_value = {
+            'audio_base64': 'dGVzdA==',
+            'mime_type': 'audio/wav',
+            'provider': 'sarvam',
+            'fallback_text': 'വ്യായാമം നിർത്തുക',
+        }
         url = reverse('voice:voice-speak')
         payload = {'text': 'വ്യായാമം നിർത്തുക', 'language': 'ml'}
         response = self.client.post(url, data=payload, content_type='application/json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data.get('fallback_text'), 'വ്യായാമം നിർത്തുക')
-        self.assertIn('audio_base64', response.data)
+        self.assertEqual(response.data.get('provider'), 'sarvam')
+        self.assertEqual(response.data.get('audio_base64'), 'dGVzdA==')
+        mock_synthesize.assert_called_once()
+
+    def test_speak_endpoint_rejects_non_sarvam_provider(self):
+        response = self.client.post(
+            reverse('voice:voice-speak'),
+            data={'text': 'വ്യായാമം നിർത്തുക', 'provider': 'gemini'},
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['error'], 'invalid_provider')
 
     def test_symptom_extractor_malayalam_rules(self):
         extractor = MalayalamSymptomExtractor()
@@ -159,9 +177,9 @@ class VoiceEvaluationAPITests(TestCase):
     def test_evaluation_post_valid_records_entry(self):
         url = reverse('voice:voice-evaluation')
         payload = {
-            "provider": "gemini",
+            "provider": "sarvam",
             "speech_language": "ml-IN",
-            "voice": "Kore",
+            "voice": "shubh",
             "sentence": "കൈകൾ പതുക്കെ ഉയർത്തുക.",
             "pronunciation_score": 5,
             "naturalness_score": 4,

@@ -164,7 +164,9 @@ class SarvamVoiceServiceUnitTests(TestCase):
 
         self.assertNotEqual(first_key, second_key)
 
-    def test_missing_api_key_raises_configuration_error(self):
+    @override_settings(SARVAM_API_KEY='')
+    @patch('apps.voice.services.sarvam_service.os.getenv', return_value='')
+    def test_missing_api_key_raises_configuration_error(self, _mock_getenv):
         service_no_key = SarvamVoiceService(api_key="", client=None)
         audio = SimpleUploadedFile("test.wav", b"dummy_content", content_type="audio/wav")
         with self.assertRaises(SarvamConfigurationError) as ctx:

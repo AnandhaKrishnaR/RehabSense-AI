@@ -158,7 +158,7 @@ export interface VoiceTemplatesResponse {
   templates: Record<string, VoiceTemplate>;
 }
 
-export type TTSProviderName = 'gemini' | 'sarvam';
+export type TTSProviderName = 'sarvam';
 export type VoiceLanguageCode = 'en-IN' | 'ml-IN';
 export type OriginalTextLanguage = 'auto' | VoiceLanguageCode;
 

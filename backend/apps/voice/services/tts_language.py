@@ -145,19 +145,3 @@ def get_sarvam_v3_voice_options(speech_language: str) -> List[Dict[str, str]]:
         }
         for voice_id, display_name, gender in SARVAM_V3_VOICES
     ]
-
-
-def normalize_gemini_voice(voice: Any) -> Dict[str, str]:
-    voice_id = getattr(voice, "id", None)
-    if not voice_id:
-        return {}
-    display_name = getattr(voice, "display_name", None) or voice_id
-    language_code = getattr(voice, "language_code", None) or ""
-    voice_gender = getattr(voice, "gender", None) or ""
-    label = f"{display_name} ({voice_gender})" if voice_gender else display_name
-    return {
-        "id": voice_id,
-        "label": label,
-        "gender": voice_gender,
-        "language_code": language_code,
-    }

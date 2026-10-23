@@ -1,5 +1,5 @@
 import { CanonicalExerciseId, MovementPhase, MovementResult } from '../../types/vision';
-import { VoiceTemplate } from '../../types/api';
+import { VoiceLanguageCode, VoiceTemplate } from '../../types/api';
 import { apiClient } from '../../services/apiClient';
 import { loadVoicePreferences, VoicePreferences } from './voicePreferences';
 import {
@@ -23,6 +23,32 @@ export const MOVEMENT_COACH_MESSAGES = {
   },
 } as const;
 
+const ENGLISH_MOVEMENT_COACH_MESSAGES = {
+  bodyweight_squat: {
+    start: 'Let us begin the squat exercise. Keep your feet shoulder-width apart and your back straight. Sit down slowly. Stop immediately if you feel pain.',
+    eccentric: 'Sit down slowly and keep your back straight.',
+    inflection: 'Good. Now slowly stand back up.',
+    concentric: 'Stand up slowly and keep your back straight.',
+  },
+  shoulder_flexion: {
+    start: 'Let us begin the arm raise exercise. Stand straight with your arm by your side. Slowly raise your arm forward. Stop immediately if you feel pain.',
+    eccentric: 'Raise your arm slowly and stay within a pain-free range.',
+    inflection: 'Good. Now slowly lower your arm.',
+    concentric: 'Lower your arm slowly and keep it close to your body.',
+  },
+} as const;
+
+export function getMovementCoachStartMessage(
+  exercise: CanonicalExerciseId,
+  speechLanguage: VoiceLanguageCode,
+  voiceTemplates: Record<string, VoiceTemplate> = {},
+): string {
+  if (speechLanguage === 'en-IN') return ENGLISH_MOVEMENT_COACH_MESSAGES[exercise].start;
+
+  const prefix = exercise === 'bodyweight_squat' ? 'squat' : 'shoulder';
+  return voiceTemplates[`${prefix}_start`]?.text || MOVEMENT_COACH_MESSAGES[exercise].start;
+}
+
 export function getMovementCoachMessage(
   exercise: CanonicalExerciseId,
   phase: MovementPhase | undefined,
@@ -32,26 +58,37 @@ export function getMovementCoachMessage(
   measurementReliable: boolean,
   movementChecks: string[] = [],
   voiceTemplates: Record<string, VoiceTemplate> = {},
+  speechLanguage: VoiceLanguageCode = 'ml-IN',
 ): string | null {
+  const messages = speechLanguage === 'en-IN'
+    ? ENGLISH_MOVEMENT_COACH_MESSAGES
+    : MOVEMENT_COACH_MESSAGES;
+  const template = (key: string) => speechLanguage === 'ml-IN' ? voiceTemplates[key]?.text : undefined;
+
   if (!measurementReliable || phase === 'unreliable') {
     return previousPhase !== 'unreliable'
-      ? voiceTemplates.camera_unreliable?.text || 'ചലനം വ്യക്തമായി കാണുന്നില്ല. ദയവായി നിങ്ങളുടെ സ്ഥാനം ശരിയാക്കുക.'
+      ? template('camera_unreliable') || (speechLanguage === 'en-IN'
+        ? 'Your movement is not clearly visible. Please adjust your position.'
+        : 'ചലനം വ്യക്തമായി കാണുന്നില്ല. ദയവായി നിങ്ങളുടെ സ്ഥാനം ശരിയാക്കുക.')
       : null;
   }
 
   if (movementChecks.length > 0 && movementChecks.includes('asymmetrical_knee_flexion')) {
-    return voiceTemplates.movement_check_knees?.text || 'കാൽമുട്ടുകൾ ഒരേ ദിശയിൽ വയ്ക്കുക. പതുക്കെ ചെയ്യുക.';
+    return template('movement_check_knees') || (speechLanguage === 'en-IN'
+      ? 'Keep your knees pointing in the same direction. Move slowly.'
+      : 'കാൽമുട്ടുകൾ ഒരേ ദിശയിൽ വയ്ക്കുക. പതുക്കെ ചെയ്യുക.');
   }
 
   if (phase === 'completed' && repetitions > previousRepetitions) {
-    return `നന്നായി ചെയ്തു. ${repetitions} ആവർത്തനം പൂർത്തിയായി.`;
+    return speechLanguage === 'en-IN'
+      ? `Well done. ${repetitions} repetitions completed.`
+      : `നന്നായി ചെയ്തു. ${repetitions} ആവർത്തനം പൂർത്തിയായി.`;
   }
 
   if (phase && phase !== previousPhase) {
     if (phase === 'eccentric' || phase === 'inflection' || phase === 'concentric') {
       const prefix = exercise === 'bodyweight_squat' ? 'squat' : 'shoulder';
-      const template = voiceTemplates[`${prefix}_${phase}`]?.text;
-      return template || MOVEMENT_COACH_MESSAGES[exercise][phase];
+      return template(`${prefix}_${phase}`) || messages[exercise][phase];
     }
   }
 
@@ -87,7 +124,9 @@ function getAudioContext(): AudioContext | null {
  */
 export async function precacheExerciseCues(exercise: CanonicalExerciseId): Promise<void> {
   const preferences = loadVoicePreferences();
-  const cues = MOVEMENT_COACH_MESSAGES[exercise];
+  const cues = preferences.speechLanguage === 'en-IN'
+    ? ENGLISH_MOVEMENT_COACH_MESSAGES[exercise]
+    : MOVEMENT_COACH_MESSAGES[exercise];
   if (!cues) return;
 
   const phrases = [cues.start, cues.eccentric, cues.inflection, cues.concentric];
@@ -103,7 +142,7 @@ export async function precacheExerciseCues(exercise: CanonicalExerciseId): Promi
     if (!existing) {
       try {
         const res = await apiClient.speakText(phrase, preferences.speechLanguage, {
-          textLanguage: preferences.textLanguage,
+          textLanguage: preferences.speechLanguage,
           speechLanguage: preferences.speechLanguage,
           provider: preferences.provider,
           voice: preferences.voice,
@@ -121,7 +160,7 @@ export async function precacheExerciseCues(exercise: CanonicalExerciseId): Promi
 /**
  * Speaks text (Malayalam or English) using Revive's multi-tier strategy:
  * 1. Checks client IndexedDB cache (0ms latency, zero API cost).
- * 2. If uncached, calls backend TTS proxy (Sarvam Bulbul v3 or Gemini) and caches response.
+ * 2. If uncached, calls the Sarvam Bulbul v3 backend TTS proxy and caches response.
  * 3. Plays via Web Audio API (or HTML5 Audio fallback).
  * 4. Priority queue with cooldown prevents overlapping cues.
  * 5. Urgent interrupt mode for safety / pain alerts.
@@ -132,6 +171,9 @@ export function speakMalayalam(
   preferenceOverrides: Partial<VoicePreferences> = {},
 ): boolean {
   if (!text || !text.trim()) return false;
+
+  const context = getAudioContext();
+  if (context?.state === 'suspended') void context.resume().catch(() => {});
 
   const now = performance.now();
   if (!interrupt && isAudioPlaying && now - lastSpokenTime < SPEECH_COOLDOWN_MS) {
@@ -392,7 +434,9 @@ function speakBrowserFallback(
     };
 
     const voices = window.speechSynthesis.getVoices();
-    const selectedVoice = voices.find((voice) => voice.lang.toLowerCase() === speechLanguage.toLowerCase());
+      const selectedVoice = voices.find((voice) => voice.lang.toLowerCase() === speechLanguage.toLowerCase())
+        || voices.find((voice) => voice.lang.toLowerCase().startsWith(speechLanguage.slice(0, 2).toLowerCase()));
+      utterance.lang = speechLanguage;
     if (selectedVoice) {
       utterance.voice = selectedVoice;
       utterance.lang = selectedVoice.lang;

@@ -24,7 +24,9 @@ export function VoiceSettingsPanel({ englishText, malayalamText }: VoiceSettings
     ? englishText
     : preferences.textLanguage === 'ml-IN'
       ? malayalamText
-      : malayalamText;
+      : preferences.speechLanguage === 'en-IN'
+        ? englishText
+        : malayalamText;
 
   const updatePreferences = (updates: Partial<VoicePreferences>) => {
     setPreferences((current) => {
@@ -128,7 +130,7 @@ export function VoiceSettingsPanel({ englishText, malayalamText }: VoiceSettings
   }, []);
 
   const playOriginalText = () => {
-    if (!compatibility?.compatible || !voices.some((voice) => voice.id === preferences.voice)) return;
+    if (!compatibility?.compatible) return;
     speakMalayalam(originalText, false, preferences);
   };
 
@@ -168,16 +170,10 @@ export function VoiceSettingsPanel({ englishText, malayalamText }: VoiceSettings
             <option value="ml-IN">മലയാളം (India)</option>
           </select>
         </label>
-        <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.82rem' }}>
+        <div style={{ display: 'grid', gap: '0.25rem', alignContent: 'start', fontSize: '0.82rem' }}>
           Provider
-          <select
-            value={preferences.provider}
-            onChange={(event) => updatePreferences({ provider: event.target.value as VoicePreferences['provider'] })}
-          >
-            <option value="gemini">Gemini</option>
-            <option value="sarvam">Sarvam</option>
-          </select>
-        </label>
+          <strong>Sarvam AI</strong>
+        </div>
         <label style={{ display: 'grid', gap: '0.25rem', fontSize: '0.82rem' }}>
           Voice
           <select
@@ -203,10 +199,10 @@ export function VoiceSettingsPanel({ englishText, malayalamText }: VoiceSettings
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.75rem' }}>
-        <button type="button" className="btn btn-outline" disabled={voiceLoading || voices.length === 0} onClick={previewVoice}>
+        <button type="button" className="btn btn-outline" disabled={voiceLoading} onClick={previewVoice}>
           <Volume2 size={16} /> Preview voice
         </button>
-        <button type="button" className="btn btn-primary" disabled={!compatibility?.compatible || voiceLoading || voices.length === 0} onClick={playOriginalText}>
+        <button type="button" className="btn btn-primary" disabled={!compatibility?.compatible || voiceLoading} onClick={playOriginalText}>
           <Play size={16} /> Play instruction
         </button>
         <button type="button" className="btn btn-outline" disabled={!playbackStatus} onClick={() => { pauseMalayalam(); setIsPaused(true); }}>

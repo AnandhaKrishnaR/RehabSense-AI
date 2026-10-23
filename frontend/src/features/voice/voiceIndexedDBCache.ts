@@ -3,7 +3,7 @@
  * Inspired by Revive's multi-tier audio caching architecture.
  * Caches synthesized audio by (language, provider, voice, text) to:
  * 1. Eliminate repetition network latency (0ms playback during exercises).
- * 2. Drastically reduce Sarvam AI / Gemini API credit usage during multi-rep workouts.
+ * 2. Drastically reduce Sarvam AI API credit usage during multi-rep workouts.
  * 3. Provide immediate offline resilience for previously heard guidance cues.
  */
 

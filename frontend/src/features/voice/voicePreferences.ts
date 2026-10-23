@@ -14,8 +14,8 @@ export interface VoicePreferences {
 export const DEFAULT_VOICE_PREFERENCES: VoicePreferences = {
   textLanguage: 'auto',
   speechLanguage: 'ml-IN',
-  provider: 'gemini',
-  voice: 'Kore',
+  provider: 'sarvam',
+  voice: 'shubh',
 };
 
 const STORAGE_KEY = 'rehabsense.voice-preferences.v1';
@@ -33,11 +33,15 @@ export function loadVoicePreferences(): VoicePreferences {
     const stored = storage.getItem(STORAGE_KEY);
     if (!stored) return DEFAULT_VOICE_PREFERENCES;
     const parsed = JSON.parse(stored) as Partial<VoicePreferences>;
+    const provider = 'sarvam';
+    const voice = parsed.provider === 'sarvam' && (parsed.voice === 'shubh' || parsed.voice === 'ishita')
+      ? parsed.voice
+      : DEFAULT_VOICE_PREFERENCES.voice;
     return {
       textLanguage: parsed.textLanguage === 'en-IN' || parsed.textLanguage === 'ml-IN' ? parsed.textLanguage : 'auto',
       speechLanguage: parsed.speechLanguage === 'en-IN' ? 'en-IN' : 'ml-IN',
-      provider: parsed.provider === 'sarvam' ? 'sarvam' : 'gemini',
-      voice: typeof parsed.voice === 'string' && parsed.voice ? parsed.voice : DEFAULT_VOICE_PREFERENCES.voice,
+      provider,
+      voice,
     };
   } catch {
     return DEFAULT_VOICE_PREFERENCES;

@@ -20,12 +20,25 @@ describe('Bilingual Voice System Tests', () => {
     vi.restoreAllMocks();
   });
 
-  it('loads default preferences with Gemini and Malayalam', () => {
+  it('loads default preferences with Sarvam and Malayalam', () => {
     const prefs = loadVoicePreferences();
     expect(prefs.speechLanguage).toBe('ml-IN');
-    expect(prefs.provider).toBe('gemini');
+    expect(prefs.provider).toBe('sarvam');
     expect(prefs.textLanguage).toBe('auto');
-    expect(prefs.voice).toBe('Kore');
+    expect(prefs.voice).toBe('shubh');
+  });
+
+  it('migrates saved Gemini settings to the Sarvam default', () => {
+    store['rehabsense.voice-preferences.v1'] = JSON.stringify({
+      textLanguage: 'auto',
+      speechLanguage: 'ml-IN',
+      provider: 'gemini',
+      voice: 'Kore',
+    });
+
+    const prefs = loadVoicePreferences();
+    expect(prefs.provider).toBe('sarvam');
+    expect(prefs.voice).toBe('shubh');
   });
 
   it('persists and retrieves updated speech preferences', () => {
@@ -51,8 +64,8 @@ describe('Bilingual Voice System Tests', () => {
     const malayalamPrefs: VoicePreferences = {
       textLanguage: 'en-IN',
       speechLanguage: 'ml-IN',
-      provider: 'gemini',
-      voice: 'Kore',
+      provider: 'sarvam',
+      voice: 'shubh',
     };
 
     // The displayed English instruction MUST remain verbatim English
@@ -63,8 +76,8 @@ describe('Bilingual Voice System Tests', () => {
     const englishPrefs: VoicePreferences = {
       textLanguage: 'ml-IN',
       speechLanguage: 'en-IN',
-      provider: 'gemini',
-      voice: 'Puck',
+      provider: 'sarvam',
+      voice: 'shubh',
     };
 
     // The displayed Malayalam instruction MUST remain verbatim Malayalam

@@ -141,7 +141,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 # RehabSense App Settings
 DEMO_MODE = os.getenv('DEMO_MODE', 'True').lower() in ('true', '1', 't')
 MALAYALAM_VOICE_PROVIDER = os.getenv('MALAYALAM_VOICE_PROVIDER', 'sarvam')
-TTS_PROVIDER = os.getenv('TTS_PROVIDER', os.getenv('MALAYALAM_TTS_PROVIDER', 'gemini'))
+TTS_PROVIDER = os.getenv('TTS_PROVIDER', os.getenv('MALAYALAM_TTS_PROVIDER', 'sarvam'))
 MALAYALAM_TTS_PROVIDER = TTS_PROVIDER
 
 # Sarvam AI Malayalam Voice Configuration
@@ -154,10 +154,6 @@ SARVAM_TIMEOUT_SECONDS = float(os.getenv('SARVAM_TIMEOUT_SECONDS', '15.0'))
 SARVAM_TTS_PACE = float(os.getenv('SARVAM_TTS_PACE', '1.0'))
 SARVAM_TTS_SAMPLE_RATE = int(os.getenv('SARVAM_TTS_SAMPLE_RATE', '22050'))
 SARVAM_TTS_DICT_ID = os.getenv('SARVAM_TTS_DICT_ID', '')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
-GEMINI_TTS_MODEL = os.getenv('GEMINI_TTS_MODEL', 'gemini-3.8-flash-tts')
-GEMINI_TTS_VOICE = os.getenv('GEMINI_TTS_VOICE', 'Kore')
-GEMINI_TTS_TIMEOUT_SECONDS = float(os.getenv('GEMINI_TTS_TIMEOUT_SECONDS', '30.0'))
 VOICE_MAX_UPLOAD_SIZE = int(os.getenv('VOICE_MAX_UPLOAD_SIZE', str(10 * 1024 * 1024)))
 VOICE_CACHE_ENABLED = os.getenv('VOICE_CACHE_ENABLED', 'True').lower() in ('true', '1', 't')
 
