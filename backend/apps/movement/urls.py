@@ -1,7 +1,8 @@
 from django.urls import path
+from apps.movement.views import SessionMeasurementCreateView
 
 app_name = 'movement'
 
 urlpatterns = [
-    # URLs will be added in Phase 2
+    path('sessions/<uuid:session_id>/measurements/', SessionMeasurementCreateView.as_view(), name='session-measurement-create'),
 ]
