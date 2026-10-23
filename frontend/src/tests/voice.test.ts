@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { loadVoicePreferences, saveVoicePreferences, VoicePreferences } from '../features/voice/voicePreferences';
+import { buildVoiceCacheKey, getCachedVoiceAudio } from '../features/voice/voiceIndexedDBCache';
 
 const store: Record<string, string> = {};
 const mockLocalStorage = {
@@ -105,5 +106,17 @@ describe('Bilingual Voice System Tests', () => {
       expect(s.trim().length).toBeGreaterThan(5);
       expect(/[A-Za-z]/.test(s)).toBe(true);
     });
+  });
+
+  it('generates consistent cache keys for Revive-style audio caching', () => {
+    const key1 = buildVoiceCacheKey('ml-IN', 'sarvam', 'shubh', 'കൈകൾ പതുക്കെ ഉയർത്തുക.');
+    const key2 = buildVoiceCacheKey('ML-IN', 'SARVAM', 'SHUBH', '  കൈകൾ പതുക്കെ ഉയർത്തുക.  ');
+    expect(key1).toBe('ml-in|sarvam|shubh|കൈകൾ പതുക്കെ ഉയർത്തുക.');
+    expect(key1).toBe(key2);
+  });
+
+  it('safely handles missing IndexedDB in non-browser environments', async () => {
+    const cached = await getCachedVoiceAudio('ml-in|sarvam|shubh|test');
+    expect(cached).toBeNull();
   });
 });
