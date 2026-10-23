@@ -20,13 +20,17 @@ class SafetyEvaluateView(APIView):
         worsening_pain = request.data.get('worsening_pain', False)
         unreliable_streak = request.data.get('unreliable_measurement_streak', 0)
         reported_symptoms = request.data.get('reported_symptoms', [])
-        transcript = " ".join([str(s) for s in reported_symptoms])
+        transcript = request.data.get('transcript', '')
+        if not transcript and reported_symptoms:
+            transcript = " ".join([str(s) for s in reported_symptoms])
+
+        patient_confirmed = request.data.get('patient_confirmed', True)
 
         result = evaluate_session_safety(
             session=session,
             pain_score=pain_score,
             transcript=transcript,
-            patient_confirmed=True,
+            patient_confirmed=patient_confirmed,
             unreliable_measurement_streak=unreliable_streak,
             worsening_pain=worsening_pain,
         )

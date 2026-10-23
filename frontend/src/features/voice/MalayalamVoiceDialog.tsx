@@ -6,10 +6,11 @@ import { SymptomReportPayload } from '../../types/api';
 export interface MalayalamVoiceDialogProps {
   sessionId: string;
   onSymptomSubmitted: (symptom: SymptomReportPayload) => void;
+  onFeedbackReceived?: (feedback: string) => void;
   onClose: () => void;
 }
 
-export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }: MalayalamVoiceDialogProps) {
+export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedbackReceived, onClose }: MalayalamVoiceDialogProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -97,15 +98,35 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
     try {
       await apiClient.submitSymptoms(sessionId, payload);
 
-      // Play synthesized Malayalam speech response or show text
       const replyText = (painScore ?? 0) >= 7
         ? 'വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.'
         : 'വിവരങ്ങൾ രേഖപ്പെടുത്തി. സാവധാനം വ്യായാമം തുടരുക.';
-      setVoiceFeedbackText(replyText);
+      const voiceResponse = await apiClient.speakText(replyText, 'ml');
+      const deliveredText = voiceResponse.fallback_text || replyText;
+      setVoiceFeedbackText(deliveredText);
+      onFeedbackReceived?.(deliveredText);
 
-      // Speak text using browser Web Speech API if supported
-      if ('speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(replyText);
+      const audioSource = voiceResponse.audio_url || (voiceResponse.audio_base64
+        ? `data:${voiceResponse.mime_type};base64,${voiceResponse.audio_base64}`
+        : null);
+      const useBrowserSpeech = voiceResponse.provider.includes('mock') && 'speechSynthesis' in window;
+      if (useBrowserSpeech) {
+        const utterance = new SpeechSynthesisUtterance(deliveredText);
+        utterance.lang = 'ml-IN';
+        window.speechSynthesis.speak(utterance);
+      } else if (audioSource) {
+        try {
+          await new Audio(audioSource).play();
+        } catch (audioError) {
+          console.warn('Unable to play the voice response audio:', audioError);
+          if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(deliveredText);
+            utterance.lang = 'ml-IN';
+            window.speechSynthesis.speak(utterance);
+          }
+        }
+      } else if ('speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(deliveredText);
         utterance.lang = 'ml-IN';
         window.speechSynthesis.speak(utterance);
       }

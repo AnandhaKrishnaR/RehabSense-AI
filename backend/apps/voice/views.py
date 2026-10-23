@@ -11,9 +11,10 @@ class VoiceTranscribeView(APIView):
     def post(self, request):
         audio_file = request.FILES.get('audio')
         language = request.data.get('language', 'ml')
+        text = request.data.get('text')
 
         adapter = get_voice_adapter(settings.MALAYALAM_VOICE_PROVIDER)
-        result = adapter.transcribe(audio_file, language=language)
+        result = adapter.transcribe(audio_file, language=language, sample_text=text)
         return Response(result, status=status.HTTP_200_OK)
 
 
