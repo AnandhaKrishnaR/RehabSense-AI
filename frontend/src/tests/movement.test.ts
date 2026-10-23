@@ -29,6 +29,25 @@ describe('Movement Geometry and Calculations', () => {
     expect(check.reliable).toBe(false);
     expect(check.missingIndices).toContain(1);
   });
+
+  it('rejects missing, non-finite, and out-of-range visibility values', () => {
+    for (const visibility of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -0.1, 1.1]) {
+      const check = checkVisibility([{ x: 0, y: 0, visibility }], [0], 0.65);
+
+      expect(check.reliable).toBe(false);
+      expect(check.minFoundVisibility).toBe(0);
+      expect(check.missingIndices).toContain(0);
+    }
+  });
+
+  it('rejects degenerate geometry and non-finite coordinates', () => {
+    const a: Landmark = { x: 0, y: 0 };
+    const b: Landmark = { x: 0, y: 0 };
+    const c: Landmark = { x: 0, y: 0 };
+    expect(Number.isNaN(calculateAngle(a, b, c))).toBe(true);
+
+    expect(checkVisibility(undefined, [0, 1], 0.65).reliable).toBe(false);
+  });
 });
 
 describe('SquatTracker State Machine', () => {
@@ -108,6 +127,33 @@ describe('SquatTracker State Machine', () => {
     expect(res.movement_checks).toContain('low_visibility_legs');
     expect(tracker.getRepCount()).toBe(0);
   });
+
+  it('handles missing landmark arrays without changing the repetition count', () => {
+    const tracker = new SquatTracker();
+    tracker.setRepCount(2);
+
+    for (const landmarks of [undefined, null]) {
+      const res = tracker.processFrame(landmarks);
+      expect(res.measurement_reliable).toBe(false);
+      expect(res.repetitions).toBe(2);
+      expect(tracker.getRepCount()).toBe(2);
+    }
+  });
+
+  it('preserves the repetition count when knee angles are invalid', () => {
+    const tracker = new SquatTracker();
+    tracker.setRepCount(2);
+    const landmarks = makeSquatLandmarks(95);
+    landmarks[23] = { ...landmarks[25] };
+    landmarks[27] = { ...landmarks[25] };
+
+    const res = tracker.processFrame(landmarks);
+
+    expect(res.measurement_reliable).toBe(false);
+    expect(res.movement_checks).toContain('invalid_landmarks');
+    expect(res.repetitions).toBe(2);
+    expect(tracker.getRepCount()).toBe(2);
+  });
 });
 
 describe('ShoulderFlexionTracker State Machine', () => {
@@ -156,5 +202,32 @@ describe('ShoulderFlexionTracker State Machine', () => {
     res = tracker.processFrame(makeShoulderLandmarks(25));
     expect(res.current_phase).toBe('completed');
     expect(tracker.getRepCount()).toBe(1);
+  });
+
+  it('handles missing landmark arrays without changing the repetition count', () => {
+    const tracker = new ShoulderFlexionTracker();
+    tracker.setRepCount(2);
+
+    for (const landmarks of [undefined, null]) {
+      const res = tracker.processFrame(landmarks);
+      expect(res.measurement_reliable).toBe(false);
+      expect(res.repetitions).toBe(2);
+      expect(tracker.getRepCount()).toBe(2);
+    }
+  });
+
+  it('preserves the repetition count when shoulder angles are invalid', () => {
+    const tracker = new ShoulderFlexionTracker();
+    tracker.setRepCount(2);
+    const landmarks = makeShoulderLandmarks(125);
+    landmarks[23] = { ...landmarks[11] };
+    landmarks[13] = { ...landmarks[11] };
+
+    const res = tracker.processFrame(landmarks);
+
+    expect(res.measurement_reliable).toBe(false);
+    expect(res.movement_checks).toContain('invalid_landmarks');
+    expect(res.repetitions).toBe(2);
+    expect(tracker.getRepCount()).toBe(2);
   });
 });

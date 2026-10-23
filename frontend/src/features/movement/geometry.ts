@@ -9,12 +9,33 @@ export interface Landmark {
   visibility?: number;
 }
 
+export function getVisibility(landmark: Landmark | undefined): number {
+  const visibility = landmark?.visibility;
+  return isFiniteNumber(visibility) && visibility >= 0 && visibility <= 1 ? visibility : 0;
+}
+
+function isFiniteNumber(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasValidCoordinates(point: Partial<Landmark> | undefined): point is Landmark {
+  return !!point && isFiniteNumber(point.x) && isFiniteNumber(point.y);
+}
+
 /**
  * Calculates the interior angle in degrees at vertex B formed by rays BA and BC.
  * Uses 2D or 3D Euclidean vector dot product.
  * Returns angle in degrees between 0.0 and 180.0.
  */
-export function calculateAngle(a: Landmark, b: Landmark, c: Landmark, use3D = false): number {
+export function calculateAngle(a: Landmark | undefined, b: Landmark | undefined, c: Landmark | undefined, use3D = false): number {
+  if (!hasValidCoordinates(a) || !hasValidCoordinates(b) || !hasValidCoordinates(c)) {
+    return Number.NaN;
+  }
+
+  if (use3D && (!isFiniteNumber(a.z) || !isFiniteNumber(b.z) || !isFiniteNumber(c.z))) {
+    return Number.NaN;
+  }
+
   const ba = {
     x: a.x - b.x,
     y: a.y - b.y,
@@ -31,8 +52,8 @@ export function calculateAngle(a: Landmark, b: Landmark, c: Landmark, use3D = fa
   const magBA = Math.sqrt(ba.x * ba.x + ba.y * ba.y + ba.z * ba.z);
   const magBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y + bc.z * bc.z);
 
-  if (magBA === 0 || magBC === 0) {
-    return 180.0;
+  if (!Number.isFinite(dotProduct) || !Number.isFinite(magBA) || !Number.isFinite(magBC) || magBA === 0 || magBC === 0) {
+    return Number.NaN;
   }
 
   const cosine = Math.max(-1.0, Math.min(1.0, dotProduct / (magBA * magBC)));
@@ -46,7 +67,7 @@ export function calculateAngle(a: Landmark, b: Landmark, c: Landmark, use3D = fa
  * Checks whether all required landmark indices meet the minimum visibility threshold.
  */
 export function checkVisibility(
-  landmarks: Landmark[],
+  landmarks: Landmark[] | null | undefined,
   requiredIndices: number[],
   minThreshold = 0.65
 ): { reliable: boolean; minFoundVisibility: number; missingIndices: number[] } {
@@ -54,16 +75,31 @@ export function checkVisibility(
   let minFoundVisibility = 1.0;
   const missingIndices: number[] = [];
 
+  if (!Array.isArray(landmarks)) {
+    return {
+      reliable: false,
+      minFoundVisibility: 0,
+      missingIndices: requiredIndices,
+    };
+  }
+
   for (const idx of requiredIndices) {
     const lm = landmarks[idx];
-    if (!lm) {
+    if (!lm || !hasValidCoordinates(lm)) {
       reliable = false;
       minFoundVisibility = 0.0;
       missingIndices.push(idx);
       continue;
     }
 
-    const vis = lm.visibility ?? 1.0;
+    const vis = lm.visibility;
+    if (!isFiniteNumber(vis) || vis < 0 || vis > 1) {
+      reliable = false;
+      minFoundVisibility = 0.0;
+      missingIndices.push(idx);
+      continue;
+    }
+
     if (vis < minFoundVisibility) {
       minFoundVisibility = vis;
     }
