@@ -14,7 +14,7 @@ RehabSense AI is an interactive, multimodal physical therapy rehabilitation assi
   1. **Bodyweight Squat** (`bodyweight_squat`): Tracks knee and hip angles with a multi-phase state machine.
   2. **Shoulder Flexion / Arm Raise** (`shoulder_flexion`): Tracks shoulder elevation and arm mechanics.
 - **3D Animated Physiotherapy Avatar**: Interactive Three.js/R3F visual guide demonstrating proper exercise kinematics with speed controls, pause, and mirror view.
-- **Malayalam Voice Interaction**: Provider-independent speech-to-text and text-to-speech adapter enabling patients to report symptoms in Malayalam (മലയാളം) or English.
+- **Malayalam Voice Interaction**: Provider-independent speech-to-text and text-to-speech adapter with native **Sarvam AI** integration (`saaras:v3` STT, `bulbul:v3` TTS) enabling patients to report symptoms in Malayalam (മലയാളം) or English, with spoken exercise guidance and rest warnings.
 - **Conservative Symptom Extraction**: Natural language extraction of pain scores and difficulty with mandatory patient confirmation safeguards.
 - **Deterministic Safety Engine**: Real-time evaluation of pain progression, red-flag symptoms, and camera reliability that automatically flags sessions for clinician review and provides cautious pause guidance.
 - **Clinician Dashboard & Progress Tracking**: Review flagged sessions, analyze movement history, record resolution audit logs, and download progress reports.
@@ -95,8 +95,8 @@ Open **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 ### Run Backend Tests (Member 3)
 ```powershell
-# Run the complete test suite (45 automated test cases)
-.\.venv\Scripts\python backend\manage.py test tests -v 2 --settings=config.settings
+# Run the complete test suite (62 automated test cases across domain models, safety rules, and Sarvam voice)
+.\.venv\Scripts\python backend\manage.py test backend/tests -v 2
 ```
 
 ### Run Frontend & Vision Tests (Members 1 & 2)

@@ -206,3 +206,17 @@ curl -X POST http://localhost:8000/api/v1/safety/evaluate/ \
   -H "Content-Type: application/json" \
   -d "{\"session_id\": \"<SESSION_ID>\", \"pain_score\": 8, \"worsening_pain\": true}"
 ```
+
+### Voice Transcription (Sarvam AI / Malayalam)
+```bash
+curl -X POST http://localhost:8000/api/v1/voice/transcribe/ \
+  -F "audio=@recording.webm;type=audio/webm" \
+  -F "language=ml-IN"
+```
+
+### Voice Speech Synthesis (Sarvam AI / Malayalam)
+```bash
+curl -X POST http://localhost:8000/api/v1/voice/speak/ \
+  -H "Content-Type: application/json" \
+  -d "{\"text\": \"പതുക്കെ താഴേക്ക് ഇരിക്കുക, പുറം നേരെ വയ്ക്കുക.\", \"language\": \"ml-IN\"}"
+```

@@ -2,6 +2,37 @@ import React, { useState, useRef } from 'react';
 import { Mic, MicOff, Check, AlertCircle, Volume2, Edit3, X } from 'lucide-react';
 import { apiClient } from '../../services/apiClient';
 import { SymptomReportPayload } from '../../types/api';
+import { speakMalayalam } from './movementVoiceCoach';
+
+interface SpeechRecognitionEventLike extends Event {
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal: boolean;
+      [index: number]: { transcript: string };
+    };
+  };
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+interface SpeechRecognitionConstructor {
+  new (): SpeechRecognitionLike;
+}
+
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+};
 
 export interface MalayalamVoiceDialogProps {
   sessionId: string;
@@ -18,9 +49,13 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
   const [bodyArea, setBodyArea] = useState<string>('');
   const [hasExtracted, setHasExtracted] = useState(false);
   const [voiceFeedbackText, setVoiceFeedbackText] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const recognizedTextRef = useRef('');
 
   // Sample quick phrases in Malayalam for immediate testing / demo
   const samplePhrases = [
@@ -32,10 +67,49 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
 
   const startRecording = async () => {
     try {
+      setRecordingError(null);
+      recognizedTextRef.current = '';
       audioChunksRef.current = [];
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
+      const recognitionWindow = window as SpeechRecognitionWindow;
+      const SpeechRecognition = recognitionWindow.SpeechRecognition || recognitionWindow.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        stream.getTracks().forEach((track) => track.stop());
+        setRecordingError('Malayalam speech recognition is not supported in this browser. Use Chrome or Edge, or select a test phrase.');
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'ml-IN';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onresult = (event) => {
+        let finalText = '';
+        let interimText = '';
+        for (let i = 0; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalText += result[0].transcript;
+          } else {
+            interimText += result[0].transcript;
+          }
+        }
+        recognizedTextRef.current = finalText;
+        setTranscript(`${finalText}${interimText}`.trim());
+      };
+      recognition.onerror = () => {
+        setRecordingError('Could not recognize the speech. Please speak clearly in Malayalam and try again.');
+      };
+      let resolveRecognitionEnd: (() => void) | null = null;
+      const recognitionEnded = new Promise<void>((resolve) => {
+        resolveRecognitionEnd = resolve;
+      });
+      recognition.onend = () => {
+        resolveRecognitionEnd?.();
+      };
+      speechRecognitionRef.current = recognition;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
@@ -44,8 +118,16 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
       mediaRecorder.onstop = async () => {
         setIsProcessing(true);
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        await Promise.race([
+          recognitionEnded,
+          new Promise<void>((resolve) => window.setTimeout(resolve, 500)),
+        ]);
+        const recognizedText = recognizedTextRef.current.trim();
         try {
-          const res = await apiClient.transcribeAudio(audioBlob, 'ml');
+          if (!recognizedText) {
+            throw new Error('No Malayalam speech was recognized.');
+          }
+          const res = await apiClient.transcribeAudio(audioBlob, 'ml', recognizedText);
           setTranscript(res.text);
           if (res.extracted_symptoms) {
             setPainScore(res.extracted_symptoms.suggested_pain_score ?? 4);
@@ -53,23 +135,30 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
             setBodyArea(res.extracted_symptoms.body_area || '');
           }
           setHasExtracted(true);
+          const spokenAcknowledgement = `നിങ്ങൾ പറഞ്ഞത്: ${res.text}`;
+          setVoiceStatus('ശബ്ദം കേൾക്കുന്നു...');
+          speakMalayalam(spokenAcknowledgement);
         } catch (err: any) {
           console.error(err);
+          setRecordingError(err.message || 'Speech could not be transcribed. Please try again.');
         } finally {
           setIsProcessing(false);
         }
       };
 
       mediaRecorder.start();
+      recognition.start();
       setIsRecording(true);
     } catch (err) {
       console.warn('Microphone permission not granted or unavailable, please use sample phrase or text input.');
+      setRecordingError('Microphone access was not granted. Please allow microphone access or select a test phrase.');
       setIsRecording(false);
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
+      speechRecognitionRef.current?.stop();
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
       setIsRecording(false);
@@ -82,6 +171,14 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
     setDifficulty(phrase.diff);
     setBodyArea(phrase.area);
     setHasExtracted(true);
+    setVoiceStatus(`തിരഞ്ഞെടുത്തു: ${phrase.text}`);
+    speakMalayalam(`നിങ്ങൾ തിരഞ്ഞെടുത്തത്: ${phrase.text}`);
+  };
+
+  const replayTranscript = () => {
+    if (!transcript) return;
+    setVoiceStatus('ശബ്ദം കേൾക്കുന്നു...');
+    speakMalayalam(`നിങ്ങൾ പറഞ്ഞത്: ${transcript}`);
   };
 
   const handleSubmit = async () => {
@@ -97,18 +194,13 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
     try {
       await apiClient.submitSymptoms(sessionId, payload);
 
-      // Play synthesized Malayalam speech response or show text
-      const replyText = (painScore ?? 0) >= 7
-        ? 'വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.'
+      // Play synthesized Malayalam speech guidance
+      const isWorsening = (painScore ?? 0) >= 6 || (transcript && transcript.includes('കൂടുന്നു'));
+      const replyText = isWorsening
+        ? 'വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.'
         : 'വിവരങ്ങൾ രേഖപ്പെടുത്തി. സാവധാനം വ്യായാമം തുടരുക.';
       setVoiceFeedbackText(replyText);
-
-      // Speak text using browser Web Speech API if supported
-      if ('speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(replyText);
-        utterance.lang = 'ml-IN';
-        window.speechSynthesis.speak(utterance);
-      }
+      speakMalayalam(replyText);
 
       onSymptomSubmitted(payload);
     } catch (err) {
@@ -170,23 +262,47 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
               ? 'Analyzing speech with conservative symptom extraction...'
               : 'Tap to speak your symptom, or select a test phrase below.'}
           </p>
+          {recordingError && (
+            <p style={{ color: '#b91c1c', fontSize: '0.8rem', margin: '0.5rem 0 0' }} role="alert">
+              {recordingError}
+            </p>
+          )}
+          {voiceStatus && (
+            <p style={{ color: '#0369a1', fontSize: '0.8rem', margin: '0.5rem 0 0', fontWeight: 600 }} role="status">
+              🔊 {voiceStatus}
+            </p>
+          )}
         </div>
 
         {/* Quick Sample Phrases for Demo */}
         <div style={{ marginBottom: '1.25rem' }}>
           <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '0.4rem' }}>
-            Quick Malayalam Test Phrases:
+            Quick Malayalam Test Phrases (click a speaker button to hear the phrase):
           </label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             {samplePhrases.map((phrase, i) => (
-              <button
-                key={i}
-                className="btn btn-outline"
-                style={{ justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
-                onClick={() => selectSamplePhrase(phrase)}
-              >
-                {phrase.label}
-              </button>
+              <div key={i} style={{ display: 'flex', gap: '0.4rem' }}>
+                <button
+                  className="btn btn-outline"
+                  style={{ flex: 1, justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                  onClick={() => selectSamplePhrase(phrase)}
+                >
+                  {phrase.label}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ padding: '0.4rem 0.6rem' }}
+                  title="Play audio in Malayalam"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    selectSamplePhrase(phrase);
+                    speakMalayalam(phrase.text);
+                  }}
+                >
+                  <Volume2 size={16} color="#0284c7" />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -209,6 +325,15 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
               placeholder="e.g. കൈ ഉയർത്തുമ്പോൾ വേദന തോന്നുന്നു"
               style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.9rem' }}
             />
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={replayTranscript}
+              disabled={!transcript}
+              style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.6rem', gap: '0.3rem' }}
+            >
+              <Volume2 size={14} color="#0284c7" /> Play Malayalam Audio
+            </button>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>

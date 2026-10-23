@@ -6,6 +6,12 @@ import { PhysiotherapyAvatar } from '../avatar/PhysiotherapyAvatar';
 import { usePoseLandmarker } from '../movement/usePoseLandmarker';
 import { MalayalamVoiceDialog } from '../voice/MalayalamVoiceDialog';
 import {
+  getMovementCoachMessage,
+  MOVEMENT_COACH_MESSAGES,
+  movementResultHasChanged,
+  speakMalayalam,
+} from '../voice/movementVoiceCoach';
+import {
   Play,
   Pause,
   Square,
@@ -17,6 +23,7 @@ import {
   RefreshCw,
   Info,
   ShieldCheck,
+  Volume2,
 } from 'lucide-react';
 
 export function ExerciseSessionView() {
@@ -34,6 +41,8 @@ export function ExerciseSessionView() {
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const measurementThrottleRef = useRef<number>(0);
+  const previousMovementResultRef = useRef<MovementResult | null>(null);
+  const lastCoachMessageAtRef = useRef(0);
 
   // Fetch exercises from API
   useEffect(() => {
@@ -48,8 +57,26 @@ export function ExerciseSessionView() {
 
   // Callback for pose landmarker stream
   const handleMovementResult = (result: MovementResult) => {
+    const previousResult = previousMovementResultRef.current;
     setMovementResult(result);
     setRepetitions(result.repetitions);
+    if (previousResult && movementResultHasChanged(result, previousResult)) {
+      const message = getMovementCoachMessage(
+        result.exercise,
+        result.current_phase,
+        result.repetitions,
+        previousResult.current_phase,
+        previousResult.repetitions,
+        result.measurement_reliable,
+        result.movement_checks,
+      );
+      const now = Date.now();
+      if (message && now - lastCoachMessageAtRef.current >= 1500) {
+        speakMalayalam(message);
+        lastCoachMessageAtRef.current = now;
+      }
+    }
+    previousMovementResultRef.current = result;
 
     // Periodically sync measurements with backend (every 2.5 seconds or on rep completion)
     const now = Date.now();
@@ -76,6 +103,9 @@ export function ExerciseSessionView() {
 
   // Start new exercise session
   const startSession = async () => {
+    // Speak start instructions aloud in Malayalam voice immediately
+    speakMalayalam(MOVEMENT_COACH_MESSAGES[selectedExerciseId].start);
+
     try {
       const sess = await apiClient.createSession({
         exercise_id: selectedExerciseId,
@@ -87,6 +117,8 @@ export function ExerciseSessionView() {
       setRepetitions(0);
       setSafetyAlert(null);
       setSessionSummary(null);
+      previousMovementResultRef.current = null;
+      lastCoachMessageAtRef.current = 0;
 
       // Start webcam if video element exists
       if (videoRef.current) {
@@ -121,16 +153,21 @@ export function ExerciseSessionView() {
   const handleSymptomSubmitted = (symptom: SymptomReportPayload) => {
     setShowVoiceDialog(false);
 
-    // Evaluate safety with reported pain score
+    // Evaluate safety with reported pain score and symptoms
     if (currentSession) {
+      const isWorsening = Boolean((symptom.pain_score ?? 0) >= 6 || (symptom.transcript && symptom.transcript.includes('കൂടുന്നു')));
       apiClient.evaluateSafety({
         session_id: currentSession.id,
         pain_score: symptom.pain_score,
-        worsening_pain: (symptom.pain_score ?? 0) >= 6,
+        worsening_pain: isWorsening,
         reported_symptoms: [symptom.difficulty, symptom.transcript],
       }).then((evaluation) => {
         if (evaluation.review_required) {
           setSafetyAlert(evaluation);
+          setSessionPaused(true);
+          // Speak pause-and-rest guidance aloud in Malayalam
+          const safetyVoiceMsg = 'വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.';
+          speakMalayalam(safetyVoiceMsg);
         }
       });
     }
@@ -200,16 +237,25 @@ export function ExerciseSessionView() {
           display: 'flex',
           alignItems: 'center',
           gap: '1rem',
+          flexWrap: 'wrap',
         }}>
           <AlertTriangle size={28} color="#ef4444" />
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: '220px' }}>
             <h4 style={{ color: '#991b1b', margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>
-              Physiotherapist Review Flagged
+              Physiotherapist Review Flagged (സുരക്ഷാ മുന്നറിയിപ്പ്)
             </h4>
-            <p style={{ color: '#7f1d1d', margin: 0, fontSize: '0.85rem' }}>
-              {safetyAlert.feedback[0] || 'High pain or symptom increase detected. Please pause and rest.'}
+            <p style={{ color: '#7f1d1d', margin: '0.2rem 0 0', fontSize: '0.85rem' }}>
+              {safetyAlert.feedback[0] || 'വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക.'}
             </p>
           </div>
+          <button
+            type="button"
+            className="btn btn-danger"
+            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            onClick={() => speakMalayalam('വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.')}
+          >
+            <Volume2 size={16} /> Listen to Audio
+          </button>
           <span className="badge badge-danger">Review Required</span>
         </div>
       )}
@@ -235,8 +281,19 @@ export function ExerciseSessionView() {
 
           {/* Bilingual Instructions Box */}
           <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#0369a1', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.3rem' }}>
-              <Info size={14} /> Clinical Movement Tips:
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#0369a1', fontSize: '0.82rem', fontWeight: 600 }}>
+                <Info size={14} /> Clinical Movement Tips:
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline"
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                onClick={() => speakMalayalam(selectedExercise.instructions_ml)}
+                title="Listen to Malayalam Instructions"
+              >
+                <Volume2 size={13} color="#0284c7" /> Listen to Audio
+              </button>
             </div>
             <p style={{ fontSize: '0.85rem', margin: '0 0 0.4rem', color: 'var(--text-main)' }}>
               <strong>English:</strong> {selectedExercise.instructions_en}

@@ -141,3 +141,13 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 # RehabSense App Settings
 DEMO_MODE = os.getenv('DEMO_MODE', 'True').lower() in ('true', '1', 't')
 MALAYALAM_VOICE_PROVIDER = os.getenv('MALAYALAM_VOICE_PROVIDER', 'mock')
+
+# Sarvam AI Malayalam Voice Configuration
+SARVAM_API_KEY = os.getenv('SARVAM_API_KEY', '')
+SARVAM_STT_MODEL = os.getenv('SARVAM_STT_MODEL', 'saaras:v3')
+SARVAM_TTS_MODEL = os.getenv('SARVAM_TTS_MODEL', 'bulbul:v3')
+SARVAM_TTS_SPEAKER = os.getenv('SARVAM_TTS_SPEAKER', 'shubh')
+SARVAM_LANGUAGE_CODE = os.getenv('SARVAM_LANGUAGE_CODE', 'ml-IN')
+SARVAM_TIMEOUT_SECONDS = float(os.getenv('SARVAM_TIMEOUT_SECONDS', '15.0'))
+VOICE_MAX_UPLOAD_SIZE = int(os.getenv('VOICE_MAX_UPLOAD_SIZE', str(10 * 1024 * 1024)))
+

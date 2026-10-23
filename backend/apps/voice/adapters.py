@@ -1,8 +1,25 @@
 import os
 import re
+import math
+import struct
+import io
 import base64
+from typing import Optional
 from abc import ABC, abstractmethod
 import requests
+
+from django.conf import settings
+from apps.voice.services.sarvam_service import (
+    SarvamVoiceService,
+    SarvamVoiceError,
+    SarvamConfigurationError,
+    SarvamAuthenticationError,
+    SarvamRateLimitError,
+    SarvamValidationError,
+    SarvamTimeoutError,
+    SarvamServiceUnavailableError,
+)
+
 
 class BaseSTTProvider(ABC):
     @abstractmethod
@@ -120,7 +137,7 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
         if not pain_detected and ('വേദന' in text_lower or 'pain' in text_lower or 'ache' in text_lower):
             pain_detected = True
             if pain_score is None:
-                pain_score = 5 # Default moderate placeholder requiring clarification
+                pain_score = 5  # Default moderate placeholder requiring clarification
 
         # 2. Difficulty Extraction
         difficulty = ""
@@ -156,8 +173,36 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
             "body_area": body_area,
             "worsening_pain": worsening_pain,
             "clarification_needed": clarification_needed,
-            "patient_confirmed": False, # Human-in-the-loop guarantee
+            "patient_confirmed": False,  # Human-in-the-loop guarantee
         }
+
+
+class SarvamSTTProvider(BaseSTTProvider):
+    """
+    Official Sarvam AI Malayalam Speech-to-Text adapter (Saaras model).
+    Preserves patient's original Malayalam speech input without English translation.
+    """
+    def __init__(self, service: Optional[SarvamVoiceService] = None):
+        self.service = service or SarvamVoiceService()
+
+    def transcribe(self, audio_file=None, text_fallback=None, language='ml-IN'):
+        return self.service.transcribe_audio(
+            audio_file=audio_file,
+            text_fallback=text_fallback,
+            language=language,
+        )
+
+
+class SarvamTTSProvider(BaseTTSProvider):
+    """
+    Official Sarvam AI Malayalam Text-to-Speech adapter (Bulbul model).
+    Generates natural, audible Malayalam speech guidance.
+    """
+    def __init__(self, service: Optional[SarvamVoiceService] = None):
+        self.service = service or SarvamVoiceService()
+
+    def synthesize(self, text, language='ml-IN'):
+        return self.service.synthesize_speech(text, language=language)
 
 
 class MockSTTProvider(BaseSTTProvider):
@@ -178,22 +223,68 @@ class MockSTTProvider(BaseSTTProvider):
 
 class MockTTSProvider(BaseTTSProvider):
     """
-    Deterministic mock text-to-speech provider.
-    Returns valid 44-byte silent WAV header in base64 format with clear mock label.
+    Deterministic fallback text-to-speech provider.
+    Generates an audible 440Hz synthetic tone in WAV format so test listeners
+    hear clear audio feedback even without cloud network connection.
     """
     def synthesize(self, text, language='ml'):
-        wav_header = (
-            b'RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00'
-            b'D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
-        )
+        # Generate 0.5s 440Hz PCM sine wave (8000 Hz sample rate, 8-bit mono)
+        sample_rate = 8000
+        duration = 0.5
+        num_samples = int(sample_rate * duration)
+        data = bytearray()
+        for i in range(num_samples):
+            val = int(128 + 80 * math.sin(2 * math.pi * 440 * i / sample_rate))
+            data.append(val)
+
+        header = bytearray(b'RIFF')
+        header.extend(struct.pack('<I', 36 + len(data)))
+        header.extend(b'WAVEfmt ')
+        header.extend(struct.pack('<I', 16))
+        header.extend(struct.pack('<H', 1))  # PCM
+        header.extend(struct.pack('<H', 1))  # Mono
+        header.extend(struct.pack('<I', sample_rate))
+        header.extend(struct.pack('<I', sample_rate))
+        header.extend(struct.pack('<H', 1))
+        header.extend(struct.pack('<H', 8))
+        header.extend(b'data')
+        header.extend(struct.pack('<I', len(data)))
+        wav_bytes = bytes(header + data)
+
         return {
             "audio_url": None,
-            "audio_base64": base64.b64encode(wav_header).decode('utf-8'),
+            "audio_base64": base64.b64encode(wav_bytes).decode('utf-8'),
             "mime_type": "audio/wav",
             "provider": "mock",
             "is_mock": True,
             "fallback_text": text,
         }
+
+
+class GTTSVoiceProvider(BaseTTSProvider):
+    """
+    Real Google Text-to-Speech (gTTS) provider for Malayalam and English.
+    Generates natural, audible native pronunciation audio in MP3 format.
+    """
+    def synthesize(self, text, language='ml'):
+        lang_code = 'ml' if language in ('ml', 'ml-IN', 'malayalam') else 'en'
+        try:
+            from gtts import gTTS
+            fp = io.BytesIO()
+            tts = gTTS(text=text, lang=lang_code)
+            tts.write_to_fp(fp)
+            audio_bytes = fp.getvalue()
+            return {
+                "audio_url": None,
+                "audio_base64": base64.b64encode(audio_bytes).decode('utf-8'),
+                "mime_type": "audio/mp3",
+                "provider": "gtts",
+                "is_mock": False,
+                "fallback_text": text,
+            }
+        except Exception:
+            # Fallback to audible synthetic wave tone if offline or rate limited
+            return MockTTSProvider().synthesize(text, language=language)
 
 
 class WhisperSTTProvider(BaseSTTProvider):
@@ -215,7 +306,6 @@ class WhisperSTTProvider(BaseSTTProvider):
             }
 
         if not self.api_key:
-            # Fall back to mock with clear warning
             return {
                 "text": "കൈ ഉയർത്തുമ്പോൾ വേദന കൂടുന്നു",
                 "language": language,
@@ -234,7 +324,6 @@ class WhisperSTTProvider(BaseSTTProvider):
                 "is_mock": False,
             }
 
-        # Live call to OpenAI Whisper API
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
             files = {"file": (audio_file.name, audio_file.read(), audio_file.content_type)}
@@ -285,7 +374,6 @@ class AI4BharatSTTProvider(BaseSTTProvider):
                 "provider": "ai4bharat_text",
                 "is_mock": False,
             }
-        # In hackathon prototype without dedicated GPU container, returns labeled mock
         return {
             "text": "കൈ ഉയർത്തുമ്പോൾ തോളിന് വേദന കൂടുന്നു",
             "language": language,
@@ -313,6 +401,8 @@ class VoiceAdapterFacade:
             "language": stt_result.get("language", language),
             "confidence": stt_result.get("confidence", 0.9),
             "provider": stt_result.get("provider", "unknown"),
+            "model": stt_result.get("model"),
+            "request_id": stt_result.get("request_id"),
             "is_mock": stt_result.get("is_mock", False),
             "extracted_symptoms": extracted,
         }
@@ -321,15 +411,31 @@ class VoiceAdapterFacade:
         return self.tts.synthesize(text, language=language)
 
 
-def get_voice_adapter(provider_name='mock') -> VoiceAdapterFacade:
+def get_voice_adapter(provider_name: Optional[str] = None) -> VoiceAdapterFacade:
+    """
+    Factory function returning a unified voice adapter facade.
+    Supports 'sarvam', 'mock', 'gtts', 'whisper', and 'ai4bharat'.
+    """
+    active_provider = (
+        provider_name
+        or getattr(settings, 'MALAYALAM_VOICE_PROVIDER', 'mock')
+        or 'mock'
+    ).lower().strip()
+
     extractor = MalayalamSymptomExtractor()
 
-    if provider_name == 'whisper':
+    if active_provider == 'sarvam':
+        stt = SarvamSTTProvider()
+        tts = SarvamTTSProvider()
+    elif active_provider == 'whisper':
         stt = WhisperSTTProvider()
-        tts = MockTTSProvider()
-    elif provider_name == 'ai4bharat':
+        tts = GTTSVoiceProvider()
+    elif active_provider == 'ai4bharat':
         stt = AI4BharatSTTProvider()
-        tts = MockTTSProvider()
+        tts = GTTSVoiceProvider()
+    elif active_provider == 'gtts':
+        stt = MockSTTProvider()
+        tts = GTTSVoiceProvider()
     else:
         stt = MockSTTProvider()
         tts = MockTTSProvider()

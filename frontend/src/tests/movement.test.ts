@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { calculateAngle, checkVisibility, Landmark } from '../features/movement/geometry';
 import { SquatTracker } from '../features/movement/squatTracker';
 import { ShoulderFlexionTracker } from '../features/movement/shoulderFlexionTracker';
+import { getMovementCoachMessage, MOVEMENT_COACH_MESSAGES } from '../features/voice/movementVoiceCoach';
 
 describe('Movement Geometry and Calculations', () => {
   it('calculates a 90-degree right angle accurately', () => {
@@ -156,5 +157,49 @@ describe('ShoulderFlexionTracker State Machine', () => {
     res = tracker.processFrame(makeShoulderLandmarks(25));
     expect(res.current_phase).toBe('completed');
     expect(tracker.getRepCount()).toBe(1);
+  });
+
+  describe('Malayalam Movement Voice Coach', () => {
+    it('announces exercise setup instructions', () => {
+      expect(MOVEMENT_COACH_MESSAGES.bodyweight_squat.start).toContain('കാലുകൾ');
+      expect(MOVEMENT_COACH_MESSAGES.shoulder_flexion.start).toContain('കൈ');
+    });
+
+    it('announces phase transitions and completed repetitions', () => {
+      expect(getMovementCoachMessage(
+        'bodyweight_squat',
+        'eccentric',
+        0,
+        'idle',
+        0,
+        true,
+      )).toContain('താഴേക്ക്');
+
+      expect(getMovementCoachMessage(
+        'shoulder_flexion',
+        'completed',
+        5,
+        'concentric',
+        4,
+        true,
+      )).toContain('5');
+    });
+
+    it('announces unreliable tracking only once until tracking recovers', () => {
+      expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'idle', 0, false)).toContain('ക്യാമറ');
+      expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'unreliable', 0, false)).toBeNull();
+    });
+
+    it('coaches the patient to slow down when movement checks fail', () => {
+      expect(getMovementCoachMessage(
+        'bodyweight_squat',
+        'eccentric',
+        0,
+        'idle',
+        0,
+        true,
+        ['asymmetrical_knee_flexion'],
+      )).toContain('പതുക്കെ');
+    });
   });
 });

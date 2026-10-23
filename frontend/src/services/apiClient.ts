@@ -192,10 +192,13 @@ class ApiClient {
     }
   }
 
-  public async transcribeAudio(audioBlob: Blob, language = 'ml'): Promise<VoiceTranscriptionResponse> {
+  public async transcribeAudio(audioBlob: Blob, language = 'ml', textFallback?: string): Promise<VoiceTranscriptionResponse> {
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.webm');
     formData.append('language', language);
+    if (textFallback) {
+      formData.append('text', textFallback);
+    }
 
     try {
       const response = await fetch(`${this.baseUrl}/voice/transcribe/`, {
@@ -207,7 +210,7 @@ class ApiClient {
     } catch (err) {
       // Demo fallback Malayalam symptom transcription
       return {
-        text: 'കൈ ഉയർത്തുമ്പോൾ ചെറിയ വേദന തോന്നുന്നു',
+        text: textFallback || 'കൈ ഉയർത്തുമ്പോൾ ചെറിയ വേദന തോന്നുന്നു',
         language: 'ml',
         confidence: 0.95,
         provider: 'mock (demo)',
