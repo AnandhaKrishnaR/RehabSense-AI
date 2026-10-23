@@ -1,11 +1,22 @@
+from rest_framework.test import APIClient
 import io
-from django.test import TestCase
+from unittest.mock import patch
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
-from apps.voice.adapters import MalayalamSymptomExtractor
+from apps.voice.adapters import GTTSVoiceProvider, MalayalamSymptomExtractor
 
+@override_settings(MALAYALAM_VOICE_PROVIDER='mock')
 class VoiceEndpointTests(TestCase):
+    @patch('gtts.gTTS', side_effect=OSError('offline'))
+    def test_gtts_failure_returns_no_tone_for_browser_fallback(self, mock_gtts):
+        result = GTTSVoiceProvider().synthesize('വ്യായാമം നിർത്തുക', language='ml')
+
+        self.assertIsNone(result['audio_base64'])
+        self.assertEqual(result['provider'], 'gtts_unavailable')
+        self.assertEqual(result['fallback_text'], 'വ്യായാമം നിർത്തുക')
+
     def test_transcribe_audio_returns_malayalam_text_and_symptoms(self):
         url = reverse('voice:voice-transcribe')
         response = self.client.post(url, data={'language': 'ml'})
@@ -44,6 +55,7 @@ class VoiceEndpointTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data.get('error'), 'unsupported_audio_format')
 
+    @override_settings(MALAYALAM_TTS_PROVIDER='mock')
     def test_speak_endpoint_returns_audio_and_fallback_text(self):
         url = reverse('voice:voice-speak')
         payload = {'text': 'വ്യായാമം നിർത്തുക', 'language': 'ml'}
@@ -74,3 +86,109 @@ class VoiceEndpointTests(TestCase):
         self.assertEqual(res3['suggested_pain_score'], 0)
         self.assertEqual(res3['suggested_difficulty'], 'moderate')
         self.assertEqual(res3['body_area'], '')
+
+    def test_symptom_extractor_handles_colloquial_pain_and_spoken_scores(self):
+        extractor = MalayalamSymptomExtractor()
+
+        colloquial = extractor.extract_symptoms('കൈ നീക്കുമ്പോൾ നീറുന്നു')
+        self.assertTrue(colloquial['pain_detected'])
+        self.assertIsNone(colloquial['suggested_pain_score'])
+        self.assertEqual(colloquial['body_area'], 'arm')
+        self.assertIn('pain_intensity', colloquial['clarification_needed'])
+
+        spoken_score = extractor.extract_symptoms('വേദന ഏഴ്')
+        self.assertEqual(spoken_score['suggested_pain_score'], 7)
+
+        spoken_vas = extractor.extract_symptoms('പത്തിൽ ആറാണ് വേദന')
+        self.assertEqual(spoken_vas['suggested_pain_score'], 6)
+
+        mild = extractor.extract_symptoms('വേദന കുറവാണ്')
+        self.assertEqual(mild['suggested_pain_score'], 2)
+
+        colloquial_mild = extractor.extract_symptoms('ചെറുതായി വേദനിക്കുന്നു')
+        self.assertEqual(colloquial_mild['suggested_pain_score'], 2)
+
+        colloquial_mild = extractor.extract_symptoms('കുറച്ചൊക്കെ വേദന')
+        self.assertEqual(colloquial_mild['suggested_pain_score'], 2)
+
+        colloquial_severe = extractor.extract_symptoms('ഭയങ്കര വേദനയാണ്')
+        self.assertEqual(colloquial_severe['suggested_pain_score'], 8)
+
+        colloquial_severe = extractor.extract_symptoms('പെരുത്ത വേദന')
+        self.assertEqual(colloquial_severe['suggested_pain_score'], 8)
+
+        unspecified = extractor.extract_symptoms('കാൽ വലിവും നോവും തോന്നുന്നു')
+        self.assertTrue(unspecified['pain_detected'])
+        self.assertIsNone(unspecified['suggested_pain_score'])
+        self.assertIn('pain_intensity', unspecified['clarification_needed'])
+
+    def test_explicit_no_pain_is_not_reported_as_pain(self):
+        extractor = MalayalamSymptomExtractor()
+        result = extractor.extract_symptoms('കടുത്ത വേദന ഇല്ല')
+
+        self.assertFalse(result['pain_detected'])
+        self.assertEqual(result['suggested_pain_score'], 0)
+        self.assertEqual(result['clarification_needed'], [])
+
+        alternate_negation = extractor.extract_symptoms('വേദന തീരെ ഇല്ല')
+        self.assertFalse(alternate_negation['pain_detected'])
+        self.assertEqual(alternate_negation['suggested_pain_score'], 0)
+
+    def test_pain_synonym_without_intensity_stays_unscored(self):
+        result = MalayalamSymptomExtractor().extract_symptoms('കൈയിൽ നൊമ്പരം തോന്നുന്നു')
+
+        self.assertTrue(result['pain_detected'])
+        self.assertIsNone(result['suggested_pain_score'])
+        self.assertIn('pain_intensity', result['clarification_needed'])
+
+
+class VoiceEvaluationAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_evaluation_get_returns_presets_and_rubric(self):
+        url = reverse('voice:voice-evaluation')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("presets", response.data)
+        self.assertEqual(len(response.data["presets"]["ml-IN"]), 8)
+        self.assertEqual(len(response.data["presets"]["en-IN"]), 8)
+        self.assertIn("rubric", response.data)
+        self.assertEqual(len(response.data["rubric"]), 5)
+
+    def test_evaluation_post_valid_records_entry(self):
+        url = reverse('voice:voice-evaluation')
+        payload = {
+            "provider": "gemini",
+            "speech_language": "ml-IN",
+            "voice": "Kore",
+            "sentence": "കൈകൾ പതുക്കെ ഉയർത്തുക.",
+            "pronunciation_score": 5,
+            "naturalness_score": 4,
+            "clarity_score": 5,
+            "medical_terms_score": 4,
+            "overall_score": 5,
+            "notes": "Natural Kerala accent, clear pauses.",
+        }
+        response = self.client.post(url, data=payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("id", response.data)
+        self.assertEqual(response.data["overall_score"], 5)
+        self.assertEqual(response.data["notes"], "Natural Kerala accent, clear pauses.")
+
+    def test_evaluation_post_invalid_score_rejected(self):
+        url = reverse('voice:voice-evaluation')
+        payload = {
+            "provider": "sarvam",
+            "speech_language": "ml-IN",
+            "voice": "shubh",
+            "sentence": "കൈകൾ പതുക്കെ ഉയർത്തുക.",
+            "pronunciation_score": 6,  # Invalid: > 5
+            "naturalness_score": 4,
+            "clarity_score": 5,
+            "medical_terms_score": 4,
+            "overall_score": 5,
+        }
+        response = self.client.post(url, data=payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "validation_error")

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, Check, AlertCircle, Volume2, Edit3, X } from 'lucide-react';
 import { apiClient } from '../../services/apiClient';
 import { SymptomReportPayload } from '../../types/api';
@@ -57,6 +57,14 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const recognizedTextRef = useRef('');
 
+  useEffect(() => {
+    const handlePlaybackError = () => {
+      setRecordingError('Speech playback failed. Check the configured TTS provider or matching browser voice and try again.');
+    };
+    window.addEventListener('rehabsense-voice-playback-error', handlePlaybackError);
+    return () => window.removeEventListener('rehabsense-voice-playback-error', handlePlaybackError);
+  }, []);
+
   // Sample quick phrases in Malayalam for immediate testing / demo
   const samplePhrases = [
     { label: 'കൈ ഉയർത്തുമ്പോൾ വേദന കൂടുന്നു (Pain increases on arm raise)', text: 'കൈ ഉയർത്തുമ്പോൾ വേദന കൂടുന്നു', pain: 6, diff: 'hard', area: 'shoulder' },
@@ -75,41 +83,35 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
       mediaRecorderRef.current = mediaRecorder;
       const recognitionWindow = window as SpeechRecognitionWindow;
       const SpeechRecognition = recognitionWindow.SpeechRecognition || recognitionWindow.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        stream.getTracks().forEach((track) => track.stop());
-        setRecordingError('Malayalam speech recognition is not supported in this browser. Use Chrome or Edge, or select a test phrase.');
-        return;
-      }
-
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'ml-IN';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.onresult = (event) => {
-        let finalText = '';
-        let interimText = '';
-        for (let i = 0; i < event.results.length; i += 1) {
-          const result = event.results[i];
-          if (result.isFinal) {
-            finalText += result[0].transcript;
-          } else {
-            interimText += result[0].transcript;
-          }
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.lang = 'ml-IN';
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.onresult = (event) => {
+            let finalText = '';
+            let interimText = '';
+            for (let i = 0; i < event.results.length; i += 1) {
+              const result = event.results[i];
+              if (result.isFinal) {
+                finalText += result[0].transcript;
+              } else {
+                interimText += result[0].transcript;
+              }
+            }
+            recognizedTextRef.current = finalText;
+            setTranscript(`${finalText}${interimText}`.trim());
+          };
+          recognition.onerror = () => {
+            // Non-fatal: backend will transcribe via Sarvam STT
+          };
+          speechRecognitionRef.current = recognition;
+          recognition.start();
+        } catch (e) {
+          console.warn('[VoiceDialog] Browser SpeechRecognition optional preview unavailable, will use Sarvam AI audio upload.');
         }
-        recognizedTextRef.current = finalText;
-        setTranscript(`${finalText}${interimText}`.trim());
-      };
-      recognition.onerror = () => {
-        setRecordingError('Could not recognize the speech. Please speak clearly in Malayalam and try again.');
-      };
-      let resolveRecognitionEnd: (() => void) | null = null;
-      const recognitionEnded = new Promise<void>((resolve) => {
-        resolveRecognitionEnd = resolve;
-      });
-      recognition.onend = () => {
-        resolveRecognitionEnd?.();
-      };
-      speechRecognitionRef.current = recognition;
+      }
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
@@ -118,24 +120,17 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
       mediaRecorder.onstop = async () => {
         setIsProcessing(true);
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await Promise.race([
-          recognitionEnded,
-          new Promise<void>((resolve) => window.setTimeout(resolve, 500)),
-        ]);
         const recognizedText = recognizedTextRef.current.trim();
         try {
-          if (!recognizedText) {
-            throw new Error('No Malayalam speech was recognized.');
-          }
-          const res = await apiClient.transcribeAudio(audioBlob, 'ml', recognizedText);
+          const res = await apiClient.transcribeAudio(audioBlob, 'ml', recognizedText || undefined);
           setTranscript(res.text);
           if (res.extracted_symptoms) {
-            setPainScore(res.extracted_symptoms.suggested_pain_score ?? 4);
+            setPainScore(res.extracted_symptoms.suggested_pain_score);
             setDifficulty(res.extracted_symptoms.suggested_difficulty || 'moderate');
             setBodyArea(res.extracted_symptoms.body_area || '');
           }
           setHasExtracted(true);
-          const spokenAcknowledgement = `നിങ്ങൾ പറഞ്ഞത്: ${res.text}`;
+          const spokenAcknowledgement = 'നിങ്ങളുടെ മറുപടി രേഖപ്പെടുത്തി. ദയവായി വിവരങ്ങൾ പരിശോധിക്കുക.';
           setVoiceStatus('ശബ്ദം കേൾക്കുന്നു...');
           speakMalayalam(spokenAcknowledgement);
         } catch (err: any) {
@@ -147,7 +142,6 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
       };
 
       mediaRecorder.start();
-      recognition.start();
       setIsRecording(true);
     } catch (err) {
       console.warn('Microphone permission not granted or unavailable, please use sample phrase or text input.');
@@ -339,16 +333,23 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
             <div>
               <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>
-                Pain Score (0 - 10 VAS): <strong>{painScore !== null ? painScore : 'None'}</strong>
+                Pain Score (0 - 10 VAS): <strong>{painScore !== null ? painScore : 'Not inferred'}</strong>
               </label>
-              <input
-                type="range"
-                min="0"
-                max="10"
-                value={painScore ?? 0}
-                onChange={(e) => setPainScore(parseInt(e.target.value, 10))}
-                style={{ width: '100%' }}
-              />
+              <select
+                value={painScore === null ? '' : painScore}
+                onChange={(e) => setPainScore(e.target.value === '' ? null : Number(e.target.value))}
+                style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.88rem' }}
+              >
+                <option value="">Select a confirmed score</option>
+                {Array.from({ length: 11 }, (_, score) => (
+                  <option key={score} value={score}>{score}</option>
+                ))}
+              </select>
+              {painScore === null && (
+                <small style={{ color: 'var(--text-muted)' }}>
+                  Pain was detected, but its intensity was unclear. Set a score only after confirming it with the patient.
+                </small>
+              )}
             </div>
             <div>
               <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>

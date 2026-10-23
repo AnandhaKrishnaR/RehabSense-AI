@@ -23,6 +23,7 @@ from apps.voice.adapters import (
     MalayalamSymptomExtractor,
     VoiceAdapterFacade,
 )
+from apps.voice.services.voice_cache import VoiceAudioCache
 from apps.rehabilitation.models import Exercise, TherapyPlan, RehabilitationSession, SymptomReport
 from apps.safety.evaluator import evaluate_session_safety
 
@@ -41,6 +42,9 @@ class SarvamVoiceServiceUnitTests(TestCase):
             tts_model="bulbul:v3",
             tts_speaker="shubh",
             language_code="ml-IN",
+            pace=1.0,
+            speech_sample_rate=22050,
+            pronunciation_dictionary_id="test-pronunciation-dict",
             client=self.mock_client,
         )
 
@@ -91,7 +95,7 @@ class SarvamVoiceServiceUnitTests(TestCase):
         self.mock_client.text_to_speech.convert.return_value = mock_response
 
         text = "പതുക്കെ താഴേക്ക് ഇരിക്കുക, പുറം നേരെ വയ്ക്കുക"
-        result = self.service.synthesize_speech(text, language="ml-IN")
+        result = self.service.synthesize_speech(text, language="ml-IN", cache_audio=False)
 
         self.assertEqual(result["audio_base64"], mock_response.audios[0])
         self.assertEqual(result["mime_type"], "audio/wav")
@@ -101,12 +105,64 @@ class SarvamVoiceServiceUnitTests(TestCase):
         self.assertEqual(result["request_id"], "req_tts_test_456")
         self.assertFalse(result["is_mock"])
         self.assertEqual(result["fallback_text"], text)
+        self.assertEqual(result["prepared_text"], "പതുക്കെ താഴേക്ക് ഇരിക്കുക, പുറം നേരെ വയ്ക്കുക.")
 
         self.mock_client.text_to_speech.convert.assert_called_once()
         call_kwargs = self.mock_client.text_to_speech.convert.call_args[1]
-        self.assertEqual(call_kwargs["text"], text)
+        self.assertEqual(call_kwargs["text"], result["prepared_text"])
         self.assertEqual(call_kwargs["language_code"], "ml-IN")
         self.assertEqual(call_kwargs["speaker"], "shubh")
+        self.assertEqual(call_kwargs["pace"], 1.0)
+        self.assertEqual(call_kwargs["speech_sample_rate"], 22050)
+        self.assertEqual(call_kwargs["output_audio_codec"], "wav")
+        self.assertEqual(call_kwargs["dict_id"], "test-pronunciation-dict")
+
+    def test_transcript_synthesis_can_bypass_preparation_and_cache(self):
+        mock_response = MagicMock()
+        mock_response.audios = ["UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="]
+        self.mock_client.text_to_speech.convert.return_value = mock_response
+        raw_text = "Patient report: pain 7/10."
+
+        result = self.service.synthesize_speech(
+            raw_text,
+            skip_preparation=True,
+            cache_audio=False,
+        )
+
+        self.assertEqual(result["prepared_text"], raw_text)
+        self.assertEqual(self.mock_client.text_to_speech.convert.call_args.kwargs["text"], raw_text)
+
+    def test_v4_flash_is_rejected_for_malayalam_before_api_call(self):
+        service = SarvamVoiceService(
+            api_key="test_key",
+            tts_model="bulbul:v4-flash",
+            client=self.mock_client,
+        )
+
+        with self.assertRaises(SarvamValidationError):
+            service.synthesize_speech("കൈ പതുക്കെ ഉയർത്തുക")
+
+        self.mock_client.text_to_speech.convert.assert_not_called()
+
+    @override_settings(VOICE_CACHE_ENABLED=False)
+    def test_long_speech_segments_preserve_sentence_order(self):
+        mock_response = MagicMock()
+        mock_response.audios = ["UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="]
+        self.mock_client.text_to_speech.convert.return_value = mock_response
+
+        result = self.service.synthesize_segments("ആദ്യം കൈ ഉയർത്തുക. പിന്നീട് കൈ താഴ്ത്തുക.")
+
+        self.assertEqual(len(result), 2)
+        sent_texts = [call.kwargs["text"] for call in self.mock_client.text_to_speech.convert.call_args_list]
+        self.assertEqual(sent_texts, ["ആദ്യം കൈ ഉയർത്തുക.", "പിന്നീട് കൈ താഴ്ത്തുക."])
+
+    def test_cache_key_includes_pronunciation_dictionary(self):
+        base = dict(text="വേദന", language="ml-IN", model="bulbul:v3", speaker="shubh")
+
+        first_key = VoiceAudioCache.generate_cache_key(**base, dictionary_id="dict-one")
+        second_key = VoiceAudioCache.generate_cache_key(**base, dictionary_id="dict-two")
+
+        self.assertNotEqual(first_key, second_key)
 
     def test_missing_api_key_raises_configuration_error(self):
         service_no_key = SarvamVoiceService(api_key="", client=None)
@@ -270,7 +326,11 @@ class SarvamVoiceEndpointAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertEqual(response.data["error"], "authentication_error")
 
-    @override_settings(MALAYALAM_VOICE_PROVIDER='sarvam', SARVAM_API_KEY='test_key')
+    @override_settings(
+        MALAYALAM_VOICE_PROVIDER='sarvam',
+        MALAYALAM_TTS_PROVIDER='sarvam',
+        SARVAM_API_KEY='test_key',
+    )
     @patch('apps.voice.adapters.SarvamTTSProvider.synthesize')
     def test_speak_endpoint_with_sarvam_success(self, mock_synthesize):
         mock_synthesize.return_value = {
@@ -297,6 +357,16 @@ class SarvamVoiceEndpointAPITests(TestCase):
         self.assertIn("audio_base64", response.data)
         self.assertEqual(response.data["mime_type"], "audio/wav")
         self.assertEqual(response.data["speaker"], "shubh")
+
+    def test_voice_templates_endpoint_marks_text_as_pending_review(self):
+        response = self.client.get(reverse('voice:voice-templates'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["review_status"],
+            "draft_pending_fluent_speaker_and_clinician_review",
+        )
+        self.assertIn("safety_pause_pain", response.data["templates"])
 
 
 class SarvamVoicePhysiotherapySafetyIntegrationTests(TestCase):

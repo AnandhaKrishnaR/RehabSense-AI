@@ -19,6 +19,7 @@ from apps.voice.services.sarvam_service import (
     SarvamTimeoutError,
     SarvamServiceUnavailableError,
 )
+from apps.voice.services.gemini_tts_service import GeminiTTSService
 
 
 class BaseSTTProvider(ABC):
@@ -33,7 +34,7 @@ class BaseSTTProvider(ABC):
 
 class BaseTTSProvider(ABC):
     @abstractmethod
-    def synthesize(self, text, language='ml'):
+    def synthesize(self, text, language='ml', **kwargs):
         """
         Synthesizes text into speech.
         Returns dict with: audio_url, audio_base64, mime_type, provider, is_mock, fallback_text.
@@ -60,13 +61,65 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
     """
     PAIN_NUMERIC_PATTERN = re.compile(r'(?:വേദന|pain)\s*[:=]?\s*(\d{1,2})', re.IGNORECASE)
     VAS_SCALE_PATTERN = re.compile(r'(\d{1,2})\s*/\s*10')
+    PAIN_SCORE_WORDS = {
+        0: ('പൂജ്യം', 'സീറോ'),
+        1: ('ഒന്ന്', 'ഒന്നു', 'ഒന്നാണ്'),
+        2: ('രണ്ട്', 'രണ്ടു', 'രണ്ടാണ്'),
+        3: ('മൂന്ന്', 'മൂന്നു', 'മൂന്നാണ്'),
+        4: ('നാല്', 'നാലു', 'നാലാണ്'),
+        5: ('അഞ്ച്', 'അഞ്ചു', 'അഞ്ചാണ്'),
+        6: ('ആറ്', 'ആറു', 'ആറാണ്'),
+        7: ('ഏഴ്', 'ഏഴു', 'ഏഴാണ്'),
+        8: ('എട്ട്', 'എട്ടു', 'എട്ടാണ്'),
+        9: ('ഒമ്പത്', 'ഒമ്പതു', 'ഒൻപത്', 'ഒൻപതു', 'ഒമ്പതാണ്'),
+        10: ('പത്ത്', 'പത്തു', 'പത്താണ്'),
+    }
+    _score_word_values = {
+        word: score for score, words in PAIN_SCORE_WORDS.items() for word in words
+    }
+    _score_word_pattern = '|'.join(
+        re.escape(word) for word in sorted(_score_word_values, key=len, reverse=True)
+    )
+    PAIN_SPOKEN_SCORE_PATTERN = re.compile(
+        rf'(?:വേദന(?:യുടെ)?(?:\s*(?:അളവ്|സ്കോർ|നില))?|pain(?:\s*score)?)'
+        rf'\s*(?:is|ആണ്|:|=)?\s*(\d{{1,2}}|{_score_word_pattern})(?=\s|$|[.,!?])',
+        re.IGNORECASE,
+    )
+    SPOKEN_VAS_PATTERN = re.compile(
+        rf'പത്തിൽ\s*(\d{{1,2}}|{_score_word_pattern})(?=\s|$|[.,!?])',
+        re.IGNORECASE,
+    )
+    PAIN_NEGATION_PATTERN = re.compile(
+        r'വേദന\s*(?:യില്ല|ഇല്ല|ഒന്നുമില്ല|ഒട്ടുമില്ല|ഒട്ടും\s*ഇല്ല|തീരെ\s*ഇല്ല)'
+        r'|വേദനയില്ല|\bno\s+(?:pain|ache)\b|\bpain[- ]free\b',
+        re.IGNORECASE,
+    )
+    PAIN_MARKERS = (
+        'വേദന', 'നോവ്', 'നോവു', 'നോവുന്നു', 'നൊമ്പരം', 'നീറു', 'നീറൽ', 'നീറ്റൽ',
+        'കുത്തുന്ന', 'കുത്തി വേദന', 'കുത്തുന്നു', 'വലിവ്', 'വലിക്കുന്നു',
+        'പൊള്ളുന്നു', 'pain', 'ache',
+    )
 
     PAIN_LEVELS = [
-        (['സഹിക്കാൻ പറ്റാത്ത വേദന', 'unbearable pain', 'extreme pain'], 9),
-        (['കടുത്ത വേദന', 'കഠിനമായ വേദന', 'severe pain', 'sharp pain'], 8),
-        (['ഇടത്തരം വേദന', 'moderate pain', 'medium pain'], 5),
-        (['ചെറിയ വേദന', 'കുറച്ച് വേദന', 'mild pain', 'slight pain', 'little pain'], 2),
-        (['വേദനയില്ല', 'വേദന ഇല്ല', 'no pain', 'zero pain'], 0),
+        ([
+            'സഹിക്കാൻ പറ്റാത്ത വേദന', 'സഹിക്കാൻ പറ്റില്ലാത്ത വേദന', 'സഹിക്കാനാവാത്ത വേദന',
+            'താങ്ങാൻ പറ്റാത്ത വേദന', 'താങ്ങാൻ കഴിയാത്ത വേദന', 'അസഹ്യമായ വേദന',
+            'unbearable pain', 'extreme pain',
+        ], 9),
+        ([
+            'കടുത്ത വേദന', 'വളരെ കടുത്ത വേദന', 'കഠിനമായ വേദന', 'കഠിനമായി വേദനിക്കുന്നു',
+            'വല്ലാത്ത വേദന', 'വല്ലാതെ വേദനിക്കുന്നു', 'ഭയങ്കര വേദന', 'പെരുത്ത വേദന',
+            'നല്ലോണം വേദന', 'തീവ്ര വേദന', 'ഒത്തിരി വേദന',
+            'വളരെ വേദനിക്കുന്നു', 'severe pain', 'sharp pain',
+        ], 8),
+        (['ഇടത്തരം വേദന', 'മിതമായ വേദന', 'moderate pain', 'medium pain'], 5),
+        ([
+            'ചെറിയ തോതിൽ വേദന', 'ചെറിയ തോതില്‍ വേദന', 'ചെറിയൊരു വേദന', 'ചെറിയ വേദന',
+            'ചെറുതായി വേദന', 'വേദന ചെറിയതാണ്', 'നേരിയ വേദന', 'ലഘുവായ വേദന',
+            'അല്പം വേദന', 'അല്പം വേദനിക്കുന്നു', 'ഒരല്പം വേദന', 'കുറച്ചൊക്കെ വേദന',
+            'കുറച്ച് വേദന', 'കുറച്ചു വേദന', 'വേദന കുറവാണ്', 'വേദന കുറവുണ്ട്',
+            'mild pain', 'slight pain', 'little pain',
+        ], 2),
     ]
 
     DIFFICULTY_LEVELS = [
@@ -102,42 +155,42 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
                 "patient_confirmed": False,
             }
 
-        # 1. Pain Score Extraction
+        # Score only explicit numbers or clear intensity words; do not infer a default.
         pain_score = None
         pain_detected = False
 
-        # Check explicit numeric pain pattern e.g. "വേദന 6" or "7/10"
-        vas_match = self.VAS_SCALE_PATTERN.search(text_lower)
-        num_match = self.PAIN_NUMERIC_PATTERN.search(text_lower)
-        if vas_match:
-            try:
-                val = int(vas_match.group(1))
-                if 0 <= val <= 10:
-                    pain_score = val
-                    pain_detected = True
-            except ValueError:
-                pass
-        elif num_match:
-            try:
-                val = int(num_match.group(1))
-                if 0 <= val <= 10:
-                    pain_score = val
-                    pain_detected = True
-            except ValueError:
-                pass
+        if self.PAIN_NEGATION_PATTERN.search(text_lower):
+            pain_score = 0
+        else:
+            vas_match = self.VAS_SCALE_PATTERN.search(text_lower)
+            num_match = self.PAIN_NUMERIC_PATTERN.search(text_lower)
+            spoken_score_match = self.PAIN_SPOKEN_SCORE_PATTERN.search(text_lower)
+            spoken_vas_match = self.SPOKEN_VAS_PATTERN.search(text_lower)
 
-        # Check keyword-based pain levels if not explicitly numeric
-        if pain_score is None:
+            if vas_match:
+                score_value = int(vas_match.group(1))
+                if 0 <= score_value <= 10:
+                    pain_score = score_value
+            elif num_match:
+                score_value = int(num_match.group(1))
+                if 0 <= score_value <= 10:
+                    pain_score = score_value
+            elif spoken_score_match:
+                pain_score = self._parse_pain_score(spoken_score_match.group(1))
+            elif spoken_vas_match and any(marker in text_lower for marker in self.PAIN_MARKERS):
+                pain_score = self._parse_pain_score(spoken_vas_match.group(1))
+
+        if pain_score is not None:
+            pain_detected = pain_score > 0
+        elif not self.PAIN_NEGATION_PATTERN.search(text_lower):
             for keywords, score in self.PAIN_LEVELS:
                 if any(kw in text_lower for kw in keywords):
                     pain_score = score
                     pain_detected = score > 0
                     break
 
-        if not pain_detected and ('വേദന' in text_lower or 'pain' in text_lower or 'ache' in text_lower):
-            pain_detected = True
-            if pain_score is None:
-                pain_score = 5  # Default moderate placeholder requiring clarification
+        if pain_score is None:
+            pain_detected = any(marker in text_lower for marker in self.PAIN_MARKERS)
 
         # 2. Difficulty Extraction
         difficulty = ""
@@ -161,7 +214,7 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
 
         # 5. Clarification Needs
         clarification_needed = []
-        if pain_detected and not body_area:
+        if pain_detected and pain_score != 0 and not body_area:
             clarification_needed.append("body_area")
         if pain_detected and pain_score is None:
             clarification_needed.append("pain_intensity")
@@ -175,6 +228,14 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
             "clarification_needed": clarification_needed,
             "patient_confirmed": False,  # Human-in-the-loop guarantee
         }
+
+    @classmethod
+    def _parse_pain_score(cls, score_text):
+        score_text = score_text.strip().lower()
+        if score_text.isdigit():
+            score_value = int(score_text)
+            return score_value if 0 <= score_value <= 10 else None
+        return cls._score_word_values.get(score_text)
 
 
 class SarvamSTTProvider(BaseSTTProvider):
@@ -196,13 +257,63 @@ class SarvamSTTProvider(BaseSTTProvider):
 class SarvamTTSProvider(BaseTTSProvider):
     """
     Official Sarvam AI Malayalam Text-to-Speech adapter (Bulbul model).
-    Generates natural, audible Malayalam speech guidance.
+    Generates natural, audible Malayalam speech guidance with text preparation and caching.
     """
     def __init__(self, service: Optional[SarvamVoiceService] = None):
         self.service = service or SarvamVoiceService()
 
-    def synthesize(self, text, language='ml-IN'):
-        return self.service.synthesize_speech(text, language=language)
+    def synthesize(self, text, language='ml-IN', speaker=None, pace=None, segment=False,
+                   prepare_text=False, cache_audio=False, **kwargs):
+        if segment:
+            segments = self.service.synthesize_segments(
+                text=text,
+                language=language,
+                speaker=speaker,
+                pace=pace,
+                prepare_text=False,
+                cache_audio=cache_audio,
+            )
+            return {
+                "audio_url": None,
+                "audio_base64": None,
+                "mime_type": "audio/wav",
+                "fallback_text": text,
+                "segments": segments,
+                "provider": "sarvam",
+                "model": self.service.tts_model,
+                "speaker": speaker or self.service.tts_speaker,
+                "count": len(segments),
+            }
+        return self.service.synthesize_speech(
+            text=text,
+            language=language,
+            speaker=speaker,
+            pace=pace,
+            skip_preparation=True,
+            cache_audio=False,
+        )
+
+
+class GeminiTTSProvider(BaseTTSProvider):
+    """Google Gemini TTS; deliberately independent from the configured STT provider."""
+
+    def __init__(self, service: Optional[GeminiTTSService] = None):
+        self.service = service or GeminiTTSService()
+
+    def synthesize(self, text, language='ml-IN', speaker=None, prepare_text=False, segment=False, **kwargs):
+        if segment:
+            return self.service.synthesize_segments(
+                text=text,
+                voice=speaker,
+                prepare_text=False,
+                speech_language=language,
+            )
+        return self.service.synthesize(
+            text=text,
+            voice=speaker,
+            prepare_text=False,
+            speech_language=language,
+        )
 
 
 class MockSTTProvider(BaseSTTProvider):
@@ -227,7 +338,7 @@ class MockTTSProvider(BaseTTSProvider):
     Generates an audible 440Hz synthetic tone in WAV format so test listeners
     hear clear audio feedback even without cloud network connection.
     """
-    def synthesize(self, text, language='ml'):
+    def synthesize(self, text, language='ml', **kwargs):
         # Generate 0.5s 440Hz PCM sine wave (8000 Hz sample rate, 8-bit mono)
         sample_rate = 8000
         duration = 0.5
@@ -266,7 +377,7 @@ class GTTSVoiceProvider(BaseTTSProvider):
     Real Google Text-to-Speech (gTTS) provider for Malayalam and English.
     Generates natural, audible native pronunciation audio in MP3 format.
     """
-    def synthesize(self, text, language='ml'):
+    def synthesize(self, text, language='ml', **kwargs):
         lang_code = 'ml' if language in ('ml', 'ml-IN', 'malayalam') else 'en'
         try:
             from gtts import gTTS
@@ -283,8 +394,14 @@ class GTTSVoiceProvider(BaseTTSProvider):
                 "fallback_text": text,
             }
         except Exception:
-            # Fallback to audible synthetic wave tone if offline or rate limited
-            return MockTTSProvider().synthesize(text, language=language)
+            return {
+                "audio_url": None,
+                "audio_base64": None,
+                "mime_type": "audio/mp3",
+                "provider": "gtts_unavailable",
+                "is_mock": False,
+                "fallback_text": text,
+            }
 
 
 class WhisperSTTProvider(BaseSTTProvider):
@@ -407,37 +524,47 @@ class VoiceAdapterFacade:
             "extracted_symptoms": extracted,
         }
 
-    def synthesize(self, text, language='ml'):
-        return self.tts.synthesize(text, language=language)
+    def synthesize(self, text, language='ml', **kwargs):
+        return self.tts.synthesize(text, language=language, **kwargs)
 
 
-def get_voice_adapter(provider_name: Optional[str] = None) -> VoiceAdapterFacade:
+def get_voice_adapter(
+    provider_name: Optional[str] = None,
+    tts_provider_name: Optional[str] = None,
+) -> VoiceAdapterFacade:
     """
     Factory function returning a unified voice adapter facade.
-    Supports 'sarvam', 'mock', 'gtts', 'whisper', and 'ai4bharat'.
+    STT uses MALAYALAM_VOICE_PROVIDER; TTS independently uses MALAYALAM_TTS_PROVIDER.
     """
     active_provider = (
         provider_name
-        or getattr(settings, 'MALAYALAM_VOICE_PROVIDER', 'mock')
-        or 'mock'
+        or getattr(settings, 'MALAYALAM_VOICE_PROVIDER', 'sarvam')
+        or 'sarvam'
     ).lower().strip()
 
     extractor = MalayalamSymptomExtractor()
 
     if active_provider == 'sarvam':
         stt = SarvamSTTProvider()
-        tts = SarvamTTSProvider()
     elif active_provider == 'whisper':
         stt = WhisperSTTProvider()
-        tts = GTTSVoiceProvider()
     elif active_provider == 'ai4bharat':
         stt = AI4BharatSTTProvider()
-        tts = GTTSVoiceProvider()
-    elif active_provider == 'gtts':
-        stt = MockSTTProvider()
-        tts = GTTSVoiceProvider()
     else:
         stt = MockSTTProvider()
+
+    active_tts_provider = (
+        tts_provider_name
+        or getattr(settings, 'MALAYALAM_TTS_PROVIDER', 'gemini')
+        or 'gemini'
+    ).lower().strip()
+    if active_tts_provider == 'sarvam':
+        tts = SarvamTTSProvider()
+    elif active_tts_provider == 'gtts':
+        tts = GTTSVoiceProvider()
+    elif active_tts_provider == 'mock':
         tts = MockTTSProvider()
+    else:
+        tts = GeminiTTSProvider()
 
     return VoiceAdapterFacade(stt, tts, extractor)

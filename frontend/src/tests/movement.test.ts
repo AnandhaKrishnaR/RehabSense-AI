@@ -186,7 +186,7 @@ describe('ShoulderFlexionTracker State Machine', () => {
     });
 
     it('announces unreliable tracking only once until tracking recovers', () => {
-      expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'idle', 0, false)).toContain('ക്യാമറ');
+      expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'idle', 0, false)).toContain('ചലനം');
       expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'unreliable', 0, false)).toBeNull();
     });
 

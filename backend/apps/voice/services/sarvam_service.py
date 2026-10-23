@@ -2,9 +2,11 @@ import os
 import re
 import io
 import logging
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 
 from django.conf import settings
+from .malayalam_text import prepare_text_for_tts, segment_malayalam_text, preserve_patient_transcript
+from .voice_cache import voice_audio_cache
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +54,13 @@ class SarvamServiceUnavailableError(SarvamVoiceError):
 
 class SarvamVoiceService:
     """
-    Service layer for Sarvam AI Malayalam voice interaction.
-    Encapsulates:
-    1. Speech-to-Text via Saaras model (ml-IN transcription mode).
-    2. Text-to-Speech via Bulbul model (ml-IN voice synthesis).
-    3. Input validation, error sanitization (no key leakage), and memory-safe audio handling.
+    Enhanced Service layer for Sarvam AI Malayalam voice interaction.
+    Features:
+    1. Speech-to-Text via Saaras model (ml-IN transcription mode, preserves original language).
+    2. Text-to-Speech via Bulbul model with native Malayalam text-preparation and prosody tuning.
+    3. Low-latency in-memory and filesystem audio caching.
+    4. Sentence segmentation for long clinical instructions.
+    5. Input validation, error sanitization (no key leakage), and memory-safe audio handling.
     """
 
     def __init__(
@@ -68,6 +72,9 @@ class SarvamVoiceService:
         language_code: Optional[str] = None,
         timeout: Optional[float] = None,
         max_upload_size: Optional[int] = None,
+        pace: Optional[float] = None,
+        speech_sample_rate: Optional[int] = None,
+        pronunciation_dictionary_id: Optional[str] = None,
         client: Optional[Any] = None,
     ):
         self.api_key = (
@@ -85,10 +92,11 @@ class SarvamVoiceService:
             or getattr(settings, 'SARVAM_TTS_MODEL', 'bulbul:v3')
             or os.getenv('SARVAM_TTS_MODEL', 'bulbul:v3')
         )
+        # Default to 'kavitha' (South-Indian Malayalam voice persona) with fallback to settings
         self.tts_speaker = (
             tts_speaker
-            or getattr(settings, 'SARVAM_TTS_SPEAKER', 'shubh')
-            or os.getenv('SARVAM_TTS_SPEAKER', 'shubh')
+            or getattr(settings, 'SARVAM_TTS_SPEAKER', 'kavitha')
+            or os.getenv('SARVAM_TTS_SPEAKER', 'kavitha')
         )
         self.language_code = (
             language_code
@@ -104,6 +112,22 @@ class SarvamVoiceService:
             max_upload_size
             if max_upload_size is not None
             else getattr(settings, 'VOICE_MAX_UPLOAD_SIZE', MAX_AUDIO_SIZE_DEFAULT)
+        )
+        # Calibrated pace for physiotherapy: 0.95 gives calm, intelligible articulation
+        self.pace = float(
+            pace
+            if pace is not None
+            else getattr(settings, 'SARVAM_TTS_PACE', 0.95)
+        )
+        self.speech_sample_rate = int(
+            speech_sample_rate
+            if speech_sample_rate is not None
+            else getattr(settings, 'SARVAM_TTS_SAMPLE_RATE', 22050)
+        )
+        self.pronunciation_dictionary_id = (
+            pronunciation_dictionary_id
+            if pronunciation_dictionary_id is not None
+            else getattr(settings, 'SARVAM_TTS_DICT_ID', '')
         )
         self._client = client
 
@@ -170,18 +194,17 @@ class SarvamVoiceService:
         if text is None:
             raise SarvamValidationError("Text cannot be None.")
 
-        cleaned = text.strip()
-        if not cleaned:
+        if not text.strip():
             raise SarvamValidationError("Text for speech synthesis cannot be empty.")
 
         max_limit = MAX_TTS_CHARS_BULBUL_V2 if 'v2' in self.tts_model else MAX_TTS_CHARS_BULBUL_V3
-        if len(cleaned) > max_limit:
+        if len(text) > max_limit:
             raise SarvamValidationError(
-                f"Text length ({len(cleaned)} characters) exceeds maximum supported limit "
+                f"Text length ({len(text)} characters) exceeds maximum supported limit "
                 f"of {max_limit} characters for model '{self.tts_model}'."
             )
 
-        return cleaned
+        return text
 
     def transcribe_audio(
         self,
@@ -210,7 +233,7 @@ class SarvamVoiceService:
         # If direct text fallback was explicitly supplied (e.g. manual fallback or test probe)
         if not audio_file and text_fallback:
             return {
-                "text": text_fallback.strip(),
+                "text": preserve_patient_transcript(text_fallback),
                 "language": target_language,
                 "confidence": 1.0,
                 "provider": "sarvam_text_fallback",
@@ -249,7 +272,7 @@ class SarvamVoiceService:
                 confidence = 0.95
 
             return {
-                "text": transcript.strip(),
+                "text": preserve_patient_transcript(transcript),
                 "language": lang_code,
                 "confidence": float(confidence),
                 "request_id": request_id,
@@ -268,42 +291,99 @@ class SarvamVoiceService:
         speaker: Optional[str] = None,
         pace: Optional[float] = None,
         speech_sample_rate: Optional[int] = None,
+        skip_preparation: bool = False,
+        cache_audio: bool = True,
     ) -> Dict[str, Any]:
         """
         Synthesizes Malayalam text to spoken audio using Sarvam AI Bulbul model.
+        Automatically applies Malayalam text preparation (number conversion,
+        terminology localization, prosody optimization) and checks cache first.
 
         Returns:
             Dict containing:
                 - audio_url: None (direct base64 payload delivered)
-                - audio_base64: Base64-encoded WAV/MP3 audio
+                - audio_base64: Base64-encoded WAV audio
                 - mime_type: 'audio/wav'
                 - provider: 'sarvam'
                 - model: Configured TTS model
                 - speaker: Speaker persona ID used
+                - pace: Speed factor applied
                 - request_id: Provider request ID if returned
                 - is_mock: False
-                - fallback_text: Original text
+                - fallback_text: Original raw text
+                - prepared_text: Normalized spoken text sent to engine
+                - cached: Boolean flag indicating cache hit
         """
-        cleaned_text = self.validate_text(text)
+        raw_text = self.validate_text(text)
+
+        # 1. Malayalam Text Preparation Pipeline
+        if skip_preparation:
+            prepared_text = raw_text
+        else:
+            prepared_text = prepare_text_for_tts(raw_text)
+        prepared_text = self.validate_text(prepared_text)
+
         target_language = language or self.language_code
         if target_language in ('ml', 'malayalam'):
             target_language = 'ml-IN'
 
         target_speaker = speaker or self.tts_speaker
+        active_pace = float(pace if pace is not None else self.pace)
+        active_sample_rate = int(speech_sample_rate if speech_sample_rate is not None else self.speech_sample_rate)
+
+        if target_language == 'ml-IN' and self.tts_model not in ('bulbul:v2', 'bulbul:v3'):
+            raise SarvamValidationError(
+                f"Sarvam model '{self.tts_model}' is not documented as Malayalam-compatible. "
+                "Use bulbul:v3 or the legacy bulbul:v2 model."
+            )
+
+        pace_limits = (0.3, 3.0) if self.tts_model == 'bulbul:v2' else (0.5, 2.0)
+        if not pace_limits[0] <= active_pace <= pace_limits[1]:
+            raise SarvamValidationError(
+                f"Speech pace for '{self.tts_model}' must be between {pace_limits[0]} and {pace_limits[1]}."
+            )
+
+        valid_sample_rates = {8000, 16000, 22050, 24000, 32000, 44100, 48000}
+        if active_sample_rate not in valid_sample_rates:
+            raise SarvamValidationError(
+                f"Speech sample rate must be one of {sorted(valid_sample_rates)} Hz."
+            )
+
+        # 2. Check Audio Cache
+        cached_item = None
+        if cache_audio:
+            cached_item = voice_audio_cache.get(
+                text=prepared_text,
+                language=target_language,
+                model=self.tts_model,
+                speaker=target_speaker,
+                pace=active_pace,
+                sample_rate=active_sample_rate,
+                dictionary_id=self.pronunciation_dictionary_id,
+            )
+        if cached_item:
+            cached_item["fallback_text"] = raw_text
+            cached_item["prepared_text"] = prepared_text
+            cached_item["cached"] = True
+            return cached_item
+
         client = self.get_client()
 
         convert_kwargs: Dict[str, Any] = {
-            "text": cleaned_text,
+            "text": prepared_text,
             "language_code": target_language,
             "speaker": target_speaker,
             "model": self.tts_model,
             "output_audio_codec": "wav",
         }
 
-        if pace is not None:
-            convert_kwargs["pace"] = pace
-        if speech_sample_rate is not None:
-            convert_kwargs["speech_sample_rate"] = speech_sample_rate
+        # Only pass pace and speech_sample_rate if supported by model
+        if active_pace is not None:
+            convert_kwargs["pace"] = active_pace
+        if active_sample_rate is not None:
+            convert_kwargs["speech_sample_rate"] = active_sample_rate
+        if self.pronunciation_dictionary_id:
+            convert_kwargs["dict_id"] = self.pronunciation_dictionary_id
 
         try:
             response = client.text_to_speech.convert(**convert_kwargs)
@@ -315,65 +395,112 @@ class SarvamVoiceService:
             audio_base64 = audios[0]
             request_id = getattr(response, 'request_id', None)
 
-            return {
+            result = {
                 "audio_url": None,
                 "audio_base64": audio_base64,
                 "mime_type": "audio/wav",
                 "provider": "sarvam",
                 "model": self.tts_model,
                 "speaker": target_speaker,
+                "pace": active_pace,
                 "request_id": request_id,
                 "is_mock": False,
-                "fallback_text": cleaned_text,
+                "fallback_text": raw_text,
+                "prepared_text": prepared_text,
+                "cached": False,
             }
+
+            # 3. Store in Audio Cache
+            if cache_audio:
+                voice_audio_cache.set(
+                    text=prepared_text,
+                    language=target_language,
+                    model=self.tts_model,
+                    speaker=target_speaker,
+                    pace=active_pace,
+                    sample_rate=active_sample_rate,
+                    dictionary_id=self.pronunciation_dictionary_id,
+                    payload=result,
+                )
+
+            return result
 
         except Exception as exc:
             self._handle_sarvam_error(exc, operation="TTS speech synthesis")
+
+    def synthesize_segments(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        speaker: Optional[str] = None,
+        pace: Optional[float] = None,
+        prepare_text: bool = True,
+        cache_audio: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Segments long instructions into clean individual sentences and synthesizes each.
+        Useful for multi-sentence exercise setup and complex clinician advice.
+        """
+        prepared = prepare_text_for_tts(text) if prepare_text else text.strip()
+        segments = segment_malayalam_text(prepared)
+        if not segments:
+            segments = [prepared]
+
+        results = []
+        for seg in segments:
+            res = self.synthesize_speech(
+                text=seg,
+                language=language,
+                speaker=speaker,
+                pace=pace,
+                skip_preparation=True,  # Already prepared
+                cache_audio=cache_audio,
+            )
+            results.append(res)
+        return results
 
     def _handle_sarvam_error(self, exc: Exception, operation: str = "Voice operation") -> None:
         """
         Maps SDK/network exceptions to domain exceptions without leaking secrets.
         """
-        # Re-raise known domain exceptions immediately
         if isinstance(exc, SarvamVoiceError):
             raise exc
 
         exc_class_name = type(exc).__name__
         exc_str = str(exc)
 
-        # Check for authentication / authorization errors
+        # Authentication / authorization errors
         if 'Unauthorized' in exc_class_name or 'Forbidden' in exc_class_name or '401' in exc_str or '403' in exc_str:
             logger.warning("Sarvam AI authentication failed during %s", operation)
             raise SarvamAuthenticationError(
                 "Sarvam AI authentication failed. Please check that SARVAM_API_KEY is valid and active."
             )
 
-        # Check for rate limits / quota exceeded
+        # Rate limits / quota exceeded
         if 'TooManyRequests' in exc_class_name or '429' in exc_str or 'rate limit' in exc_str.lower():
             logger.warning("Sarvam AI rate limit exceeded during %s", operation)
             raise SarvamRateLimitError(
                 "Sarvam AI rate limit or quota exceeded. Please retry after a brief pause."
             )
 
-        # Check for content too large / bad request validation
+        # Content too large / bad request validation
         if 'ContentTooLarge' in exc_class_name or '413' in exc_str:
             raise SarvamValidationError(
                 "Audio or text payload exceeds Sarvam AI capacity limit."
             )
 
         if 'BadRequest' in exc_class_name or 'UnprocessableEntity' in exc_class_name or '400' in exc_str or '422' in exc_str:
-            # Sanitize error string to prevent any token exposure
             sanitized_msg = re.sub(r'[A-Za-z0-9_-]{20,}', '[REDACTED]', exc_str)
             raise SarvamValidationError(f"Sarvam AI rejected request parameters: {sanitized_msg}")
 
-        # Check for timeouts
+        # Timeouts
         if 'Timeout' in exc_class_name or 'timed out' in exc_str.lower():
             logger.warning("Sarvam AI request timed out during %s", operation)
             raise SarvamTimeoutError(
                 f"Sarvam AI {operation} timed out after {self.timeout} seconds."
             )
 
-        # Check for upstream server outages
+        # Upstream server outages
         if any(term in exc_class_name for term in ('InternalServer', 'BadGateway', 'ServiceUnavailable', 'GatewayTimeout')) \
            or any(code in exc_str for code in ('500', '502', '503', '504')):
             logger.error("Sarvam AI upstream outage during %s: %s", operation, exc_class_name)

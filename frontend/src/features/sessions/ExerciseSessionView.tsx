@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiClient, DEMO_EXERCISES } from '../../services/apiClient';
-import { ExerciseDefinition, SessionRecord, SymptomReportPayload, SafetyEvaluationResponse } from '../../types/api';
+import { ExerciseDefinition, SessionRecord, SymptomReportPayload, SafetyEvaluationResponse, VoiceTemplate } from '../../types/api';
 import { CanonicalExerciseId, MovementResult } from '../../types/vision';
 import { PhysiotherapyAvatar } from '../avatar/PhysiotherapyAvatar';
 import { usePoseLandmarker } from '../movement/usePoseLandmarker';
 import { MalayalamVoiceDialog } from '../voice/MalayalamVoiceDialog';
+import { VoiceSettingsPanel } from '../voice/VoiceSettingsPanel';
 import {
   getMovementCoachMessage,
   MOVEMENT_COACH_MESSAGES,
@@ -38,6 +39,8 @@ export function ExerciseSessionView() {
   const [safetyAlert, setSafetyAlert] = useState<SafetyEvaluationResponse | null>(null);
   const [showVoiceDialog, setShowVoiceDialog] = useState(false);
   const [sessionSummary, setSessionSummary] = useState<any | null>(null);
+  const [voiceTemplates, setVoiceTemplates] = useState<Record<string, VoiceTemplate>>({});
+  const [voicePlaybackError, setVoicePlaybackError] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const measurementThrottleRef = useRef<number>(0);
@@ -51,6 +54,15 @@ export function ExerciseSessionView() {
         setExercises(list);
       }
     });
+    apiClient.getVoiceTemplates().then((response) => {
+      if (response?.templates) setVoiceTemplates(response.templates);
+    });
+  }, []);
+
+  useEffect(() => {
+    const handlePlaybackError = () => setVoicePlaybackError(true);
+    window.addEventListener('rehabsense-voice-playback-error', handlePlaybackError);
+    return () => window.removeEventListener('rehabsense-voice-playback-error', handlePlaybackError);
   }, []);
 
   const selectedExercise = exercises.find((e) => e.id === selectedExerciseId) || exercises[0];
@@ -69,6 +81,7 @@ export function ExerciseSessionView() {
         previousResult.repetitions,
         result.measurement_reliable,
         result.movement_checks,
+        voiceTemplates,
       );
       const now = Date.now();
       if (message && now - lastCoachMessageAtRef.current >= 1500) {
@@ -103,8 +116,10 @@ export function ExerciseSessionView() {
 
   // Start new exercise session
   const startSession = async () => {
+    setVoicePlaybackError(false);
     // Speak start instructions aloud in Malayalam voice immediately
-    speakMalayalam(MOVEMENT_COACH_MESSAGES[selectedExerciseId].start);
+    const startTemplateKey = selectedExerciseId === 'bodyweight_squat' ? 'squat_start' : 'shoulder_start';
+    speakMalayalam(voiceTemplates[startTemplateKey]?.text || MOVEMENT_COACH_MESSAGES[selectedExerciseId].start);
 
     try {
       const sess = await apiClient.createSession({
@@ -166,7 +181,8 @@ export function ExerciseSessionView() {
           setSafetyAlert(evaluation);
           setSessionPaused(true);
           // Speak pause-and-rest guidance aloud in Malayalam
-          const safetyVoiceMsg = 'വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.';
+          const safetyVoiceMsg = voiceTemplates.safety_pause_pain?.text
+            || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.';
           speakMalayalam(safetyVoiceMsg);
         }
       });
@@ -175,6 +191,11 @@ export function ExerciseSessionView() {
 
   return (
     <div>
+      {voicePlaybackError && (
+        <div role="alert" style={{ marginBottom: '0.75rem', color: '#991b1b' }}>
+          Malayalam audio could not be played. Check Sarvam connectivity or an available browser Malayalam voice.
+        </div>
+      )}
       {/* Exercise Selection Header */}
       <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -226,6 +247,13 @@ export function ExerciseSessionView() {
         </div>
       </div>
 
+      {selectedExercise && (
+        <VoiceSettingsPanel
+          englishText={selectedExercise.instructions_en}
+          malayalamText={selectedExercise.instructions_ml}
+        />
+      )}
+
       {/* Safety Alert Banner */}
       {safetyAlert && safetyAlert.review_required && (
         <div style={{
@@ -252,7 +280,8 @@ export function ExerciseSessionView() {
             type="button"
             className="btn btn-danger"
             style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-            onClick={() => speakMalayalam('വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.')}
+            onClick={() => speakMalayalam(voiceTemplates.safety_pause_pain?.text
+              || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.')}
           >
             <Volume2 size={16} /> Listen to Audio
           </button>

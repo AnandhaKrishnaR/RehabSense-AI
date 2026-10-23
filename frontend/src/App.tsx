@@ -4,10 +4,11 @@ import { HealthResponse } from './types/api';
 import { ExerciseSessionView } from './features/sessions/ExerciseSessionView';
 import { ClinicianDashboardView } from './features/clinician/ClinicianDashboardView';
 import { ProgressView } from './features/progress/ProgressView';
-import { Activity, ShieldAlert, FileText, Stethoscope } from 'lucide-react';
+import { VoiceEvaluationLab } from './features/voice/VoiceEvaluationLab';
+import { Activity, ShieldAlert, FileText, Stethoscope, Volume2 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'session' | 'clinician' | 'progress'>('session');
+  const [activeTab, setActiveTab] = useState<'session' | 'clinician' | 'progress' | 'voice-lab'>('session');
   const [health, setHealth] = useState<HealthResponse | null>(null);
 
   useEffect(() => {
@@ -91,6 +92,13 @@ export default function App() {
               >
                 <FileText size={16} /> Progress & Reports
               </button>
+              <button
+                className={`btn ${activeTab === 'voice-lab' ? 'btn-primary' : 'btn-outline'}`}
+                style={{ padding: '0.45rem 1rem', fontSize: '0.88rem', border: 'none' }}
+                onClick={() => setActiveTab('voice-lab')}
+              >
+                <Volume2 size={16} /> Voice Lab
+              </button>
             </nav>
 
             <span className={`badge ${health?.status?.includes('healthy') ? 'badge-success' : 'badge-warning'}`}>
@@ -105,6 +113,7 @@ export default function App() {
         {activeTab === 'session' && <ExerciseSessionView />}
         {activeTab === 'clinician' && <ClinicianDashboardView />}
         {activeTab === 'progress' && <ProgressView />}
+        {activeTab === 'voice-lab' && <VoiceEvaluationLab />}
       </main>
 
       {/* Footer */}
