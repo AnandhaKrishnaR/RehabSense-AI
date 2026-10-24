@@ -1,4 +1,4 @@
-import { Landmark, calculateAngle, checkVisibility } from './geometry';
+import { Landmark, calculateAngle, checkVisibility, getVisibility } from './geometry';
 import { MovementResult, MovementPhase } from '../../types/vision';
 
 export interface ShoulderFlexionConfig {
@@ -42,11 +42,12 @@ export class ShoulderFlexionTracker {
     this.repCount = reps;
   }
 
-  public processFrame(landmarks: Landmark[]): MovementResult {
+  public processFrame(landmarks: Landmark[] | null | undefined): MovementResult {
     const timestamp = new Date().toISOString();
+    const safeLandmarks = Array.isArray(landmarks) ? landmarks : [];
     const visibilityCheck = checkVisibility(landmarks, SHOULDER_REQUIRED_LANDMARKS, this.config.minVisibility);
 
-    if (!visibilityCheck.reliable || landmarks.length < 25) {
+    if (!Array.isArray(landmarks) || landmarks.length < 25 || !visibilityCheck.reliable) {
       return {
         exercise: 'shoulder_flexion',
         repetitions: this.repCount,
@@ -56,20 +57,40 @@ export class ShoulderFlexionTracker {
         },
         measurement_reliable: false,
         visibility: {
-          left_shoulder: landmarks[11]?.visibility ?? 0,
-          right_shoulder: landmarks[12]?.visibility ?? 0,
-          left_elbow: landmarks[13]?.visibility ?? 0,
-          right_elbow: landmarks[14]?.visibility ?? 0,
+          left_shoulder: getVisibility(safeLandmarks[11]),
+          right_shoulder: getVisibility(safeLandmarks[12]),
+          left_elbow: getVisibility(safeLandmarks[13]),
+          right_elbow: getVisibility(safeLandmarks[14]),
         },
-        movement_checks: ['low_visibility_arms'],
+        movement_checks: visibilityCheck.missingIndices.length > 0 ? ['low_visibility_arms'] : ['invalid_landmarks'],
         current_phase: 'unreliable',
         captured_at: timestamp,
       };
     }
 
-    // Shoulder angle formed by Hip -> Shoulder -> Elbow
-    const leftShoulderAngle = calculateAngle(landmarks[23], landmarks[11], landmarks[13]);
-    const rightShoulderAngle = calculateAngle(landmarks[24], landmarks[12], landmarks[14]);
+    const leftShoulderAngle = calculateAngle(safeLandmarks[23], safeLandmarks[11], safeLandmarks[13]);
+    const rightShoulderAngle = calculateAngle(safeLandmarks[24], safeLandmarks[12], safeLandmarks[14]);
+
+    if (!Number.isFinite(leftShoulderAngle) || !Number.isFinite(rightShoulderAngle)) {
+      return {
+        exercise: 'shoulder_flexion',
+        repetitions: this.repCount,
+        joint_angles: {
+          left_shoulder: null,
+          right_shoulder: null,
+        },
+        measurement_reliable: false,
+        visibility: {
+          left_shoulder: getVisibility(safeLandmarks[11]),
+          right_shoulder: getVisibility(safeLandmarks[12]),
+          left_elbow: getVisibility(safeLandmarks[13]),
+          right_elbow: getVisibility(safeLandmarks[14]),
+        },
+        movement_checks: ['invalid_landmarks'],
+        current_phase: 'unreliable',
+        captured_at: timestamp,
+      };
+    }
 
     let trackingAngle = 0;
     if (this.activeArm === 'left') {
@@ -82,7 +103,6 @@ export class ShoulderFlexionTracker {
 
     const movementChecks: string[] = [];
 
-    // State machine transitions
     if (trackingAngle <= this.config.restingAngle) {
       if (this.currentPhase === 'concentric' && this.reachedPeak) {
         this.repCount += 1;
@@ -92,12 +112,12 @@ export class ShoulderFlexionTracker {
         this.currentPhase = 'idle';
       }
     } else if (trackingAngle >= this.config.peakAngle) {
-      this.currentPhase = 'inflection'; // Peak elevation achieved
+      this.currentPhase = 'inflection';
       this.reachedPeak = true;
     } else if (this.reachedPeak && trackingAngle < this.config.peakAngle) {
-      this.currentPhase = 'concentric'; // Lowering arm
+      this.currentPhase = 'concentric';
     } else if (!this.reachedPeak && trackingAngle > this.config.restingAngle) {
-      this.currentPhase = 'eccentric'; // Raising arm
+      this.currentPhase = 'eccentric';
     }
 
     return {
@@ -109,10 +129,10 @@ export class ShoulderFlexionTracker {
       },
       measurement_reliable: true,
       visibility: {
-        left_shoulder: landmarks[11]?.visibility ?? 1.0,
-        right_shoulder: landmarks[12]?.visibility ?? 1.0,
-        left_elbow: landmarks[13]?.visibility ?? 1.0,
-        right_elbow: landmarks[14]?.visibility ?? 1.0,
+        left_shoulder: getVisibility(safeLandmarks[11]),
+        right_shoulder: getVisibility(safeLandmarks[12]),
+        left_elbow: getVisibility(safeLandmarks[13]),
+        right_elbow: getVisibility(safeLandmarks[14]),
       },
       movement_checks: movementChecks,
       current_phase: this.currentPhase,

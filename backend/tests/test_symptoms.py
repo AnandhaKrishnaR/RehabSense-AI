@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.contrib.auth.models import User
 from rest_framework import status
 from apps.rehabilitation.models import Exercise, RehabilitationSession
 from apps.safety.models import ClinicianReviewFlag
@@ -15,13 +16,18 @@ class SymptomEndpointTests(TestCase):
             target_joints=['left_shoulder'],
             demo_parameters={'peak_shoulder_angle': 120.0},
         )
+        self.user1 = User.objects.create_user(username='patient1', password='password123')
+        self.user2 = User.objects.create_user(username='patient2', password='password123')
         self.session = RehabilitationSession.objects.create(
+            user=self.user1,
+            patient_identifier='patient1',
             exercise=self.exercise,
             target_reps=8,
             status='in_progress',
         )
 
     def test_submit_mild_symptom_saves_record(self):
+        self.client.force_login(self.user1)
         url = reverse('rehabilitation:session-symptom-create', kwargs={'session_id': self.session.id})
         payload = {
             "transcript": "ചെറിയ ക്ഷീണം തോന്നുന്നു",
@@ -35,9 +41,11 @@ class SymptomEndpointTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['pain_score'], 2)
         self.assertTrue(response.data['patient_confirmed'])
+        self.assertEqual(response.data['extraction_status'], 'confirmed')
         self.assertFalse(response.data['safety_evaluation']['review_required'])
 
     def test_submit_high_pain_triggers_clinician_review_flag(self):
+        self.client.force_login(self.user1)
         url = reverse('rehabilitation:session-symptom-create', kwargs={'session_id': self.session.id})
         payload = {
             "transcript": "കടുത്ത വേദന കൂടുന്നു",
@@ -58,6 +66,7 @@ class SymptomEndpointTests(TestCase):
         self.assertTrue(ClinicianReviewFlag.objects.filter(session=self.session).exists())
 
     def test_submit_invalid_pain_score_returns_400(self):
+        self.client.force_login(self.user1)
         url = reverse('rehabilitation:session-symptom-create', kwargs={'session_id': self.session.id})
         payload = {
             "transcript": "വേദന",
@@ -66,4 +75,15 @@ class SymptomEndpointTests(TestCase):
         }
         response = self.client.post(url, data=payload, content_type='application/json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('pain_score', response.data)
+        self.assertIn('pain_score', response.data.get('field_errors', response.data))
+
+    def test_cross_patient_symptom_submission_denied(self):
+        self.client.force_login(self.user2)
+        url = reverse('rehabilitation:session-symptom-create', kwargs={'session_id': self.session.id})
+        payload = {
+            "transcript": "വേദന",
+            "pain_score": 3,
+            "patient_confirmed": True,
+        }
+        response = self.client.post(url, data=payload, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

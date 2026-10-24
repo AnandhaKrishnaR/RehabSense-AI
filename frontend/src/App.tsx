@@ -24,6 +24,7 @@ import { ExerciseSessionView } from './features/sessions/ExerciseSessionView';
 import { ClinicianDashboardView } from './features/clinician/ClinicianDashboardView';
 import { ProgressView } from './features/progress/ProgressView';
 import { LoginView, WorkspaceRole } from './features/auth/LoginView';
+import { VoiceEvaluationLab } from './features/voice/VoiceEvaluationLab';
 import {
   CaregiverDashboard,
   ClinicianOverview,
@@ -69,6 +70,7 @@ const roleNames: Record<WorkspaceRole, string> = {
 export default function App() {
   const [role, setRole] = useState<WorkspaceRole>('patient');
   const [page, setPage] = useState<DashboardPage>('overview');
+  const [voiceLabOpen, setVoiceLabOpen] = useState(false);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -81,12 +83,14 @@ export default function App() {
   const changeRole = (nextRole: WorkspaceRole) => {
     setRole(nextRole);
     setPage('overview');
+    setVoiceLabOpen(false);
     setMenuOpen(false);
     setNotificationsOpen(false);
   };
 
   const navigate = (nextPage: DashboardPage) => {
     setPage(nextPage);
+    setVoiceLabOpen(false);
     setMenuOpen(false);
     setNotificationsOpen(false);
   };
@@ -101,6 +105,7 @@ export default function App() {
   const unreadCount = role === 'physiotherapist' ? 2 : role === 'caregiver' ? 1 : (health?.demo_mode ? 0 : 1);
 
   const renderPage = () => {
+    if (voiceLabOpen) return <VoiceEvaluationLab />;
     if (role === 'patient') {
       if (page === 'exercise') return <ExerciseSessionView />;
       if (page === 'progress') return <ProgressView />;
@@ -147,6 +152,17 @@ export default function App() {
               {label}
             </button>
           ))}
+          <button
+            className={`top-navigation-link ${voiceLabOpen ? 'top-navigation-active' : ''}`}
+            onClick={() => {
+              setVoiceLabOpen(true);
+              setMenuOpen(false);
+              setNotificationsOpen(false);
+            }}
+            aria-current={voiceLabOpen ? 'page' : undefined}
+          >
+            Voice lab
+          </button>
         </nav>
         <div className="topbar-spacer" />
         <label className="role-select-wrap"><span>Workspace preview</span><span className="role-select-control"><select value={role} onChange={(event) => changeRole(event.target.value as WorkspaceRole)} aria-label="Switch dashboard preview role">{roleOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><ChevronDown size={14} aria-hidden="true" /></span></label>

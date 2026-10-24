@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,6 +26,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # Third party apps
     'rest_framework',
+    'rest_framework.authtoken',
     'corsheaders',
     # RehabSense Domain Apps
     'apps.rehabilitation',
@@ -65,12 +67,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Database Configuration (Defaults to SQLite; supports PostgreSQL via DATABASE_URL)
+DATABASE_URL = os.getenv('DATABASE_URL', '')
+if DATABASE_URL and (DATABASE_URL.startswith('postgres://') or DATABASE_URL.startswith('postgresql://')):
+    parsed_db = urlparse(DATABASE_URL)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': parsed_db.path[1:],
+            'USER': parsed_db.username or '',
+            'PASSWORD': parsed_db.password or '',
+            'HOST': parsed_db.hostname or 'localhost',
+            'PORT': parsed_db.port or 5432,
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -90,11 +107,21 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS configuration
-CORS_ALLOW_ALL_ORIGINS = True
+cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS', '')
+if cors_origins_env:
+    CORS_ALLOWED_ORIGINS = [o.strip() for o in cors_origins_env.split(',') if o.strip()]
+    CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'False').lower() in ('true', '1', 't')
+else:
+    CORS_ALLOW_ALL_ORIGINS = True
+
 CORS_ALLOW_CREDENTIALS = True
 
 # REST Framework settings
 REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
@@ -104,8 +131,29 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.FormParser',
         'rest_framework.parsers.MultiPartParser',
     ],
+    'EXCEPTION_HANDLER': 'config.exceptions.custom_exception_handler',
 }
+
+# Maximum audio upload size (10 MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 
 # RehabSense App Settings
 DEMO_MODE = os.getenv('DEMO_MODE', 'True').lower() in ('true', '1', 't')
-MALAYALAM_VOICE_PROVIDER = os.getenv('MALAYALAM_VOICE_PROVIDER', 'mock')
+MALAYALAM_VOICE_PROVIDER = os.getenv('MALAYALAM_VOICE_PROVIDER', 'sarvam')
+TTS_PROVIDER = os.getenv('TTS_PROVIDER', os.getenv('MALAYALAM_TTS_PROVIDER', 'sarvam'))
+MALAYALAM_TTS_PROVIDER = TTS_PROVIDER
+
+# Sarvam AI Malayalam Voice Configuration
+SARVAM_API_KEY = os.getenv('SARVAM_API_KEY', '')
+SARVAM_STT_MODEL = os.getenv('SARVAM_STT_MODEL', 'saaras:v3')
+SARVAM_TTS_MODEL = os.getenv('SARVAM_TTS_MODEL', 'bulbul:v3')
+SARVAM_TTS_SPEAKER = os.getenv('SARVAM_TTS_SPEAKER', 'shubh')
+SARVAM_LANGUAGE_CODE = os.getenv('SARVAM_LANGUAGE_CODE', 'ml-IN')
+SARVAM_TIMEOUT_SECONDS = float(os.getenv('SARVAM_TIMEOUT_SECONDS', '15.0'))
+SARVAM_TTS_PACE = float(os.getenv('SARVAM_TTS_PACE', '1.0'))
+SARVAM_TTS_SAMPLE_RATE = int(os.getenv('SARVAM_TTS_SAMPLE_RATE', '22050'))
+SARVAM_TTS_DICT_ID = os.getenv('SARVAM_TTS_DICT_ID', '')
+VOICE_MAX_UPLOAD_SIZE = int(os.getenv('VOICE_MAX_UPLOAD_SIZE', str(10 * 1024 * 1024)))
+VOICE_CACHE_ENABLED = os.getenv('VOICE_CACHE_ENABLED', 'True').lower() in ('true', '1', 't')
+

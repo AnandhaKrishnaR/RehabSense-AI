@@ -1,4 +1,4 @@
-import { Landmark, calculateAngle, checkVisibility } from './geometry';
+import { Landmark, calculateAngle, checkVisibility, getVisibility } from './geometry';
 import { MovementResult, MovementPhase } from '../../types/vision';
 
 export interface SquatConfig {
@@ -40,12 +40,38 @@ export class SquatTracker {
     this.repCount = reps;
   }
 
-  public processFrame(landmarks: Landmark[]): MovementResult {
+  public processFrame(landmarks: Landmark[] | null | undefined): MovementResult {
     const timestamp = new Date().toISOString();
+    const safeLandmarks = Array.isArray(landmarks) ? landmarks : [];
     const visibilityCheck = checkVisibility(landmarks, SQUAT_REQUIRED_LANDMARKS, this.config.minVisibility);
 
-    // If visibility is compromised, return unreliable result without penalizing user
-    if (!visibilityCheck.reliable || landmarks.length < 29) {
+    if (!Array.isArray(landmarks) || landmarks.length < 29 || !visibilityCheck.reliable) {
+      return {
+        exercise: 'bodyweight_squat',
+        repetitions: this.repCount,
+        joint_angles: {
+          left_knee: null,
+          right_knee: null,
+          left_hip: null,
+          right_hip: null,
+        },
+        measurement_reliable: false,
+        visibility: {
+          left_knee: getVisibility(safeLandmarks[25]),
+          right_knee: getVisibility(safeLandmarks[26]),
+          left_hip: getVisibility(safeLandmarks[23]),
+          right_hip: getVisibility(safeLandmarks[24]),
+        },
+        movement_checks: visibilityCheck.missingIndices.length > 0 ? ['low_visibility_legs'] : ['invalid_landmarks'],
+        current_phase: 'unreliable',
+        captured_at: timestamp,
+      };
+    }
+
+    const leftKneeAngle = calculateAngle(safeLandmarks[23], safeLandmarks[25], safeLandmarks[27]);
+    const rightKneeAngle = calculateAngle(safeLandmarks[24], safeLandmarks[26], safeLandmarks[28]);
+
+    if (!Number.isFinite(leftKneeAngle) || !Number.isFinite(rightKneeAngle)) {
       return {
         exercise: 'bodyweight_squat',
         repetitions: this.repCount,
@@ -55,33 +81,27 @@ export class SquatTracker {
         },
         measurement_reliable: false,
         visibility: {
-          left_knee: landmarks[25]?.visibility ?? 0,
-          right_knee: landmarks[26]?.visibility ?? 0,
-          left_hip: landmarks[23]?.visibility ?? 0,
-          right_hip: landmarks[24]?.visibility ?? 0,
+          left_knee: getVisibility(safeLandmarks[25]),
+          right_knee: getVisibility(safeLandmarks[26]),
+          left_hip: getVisibility(safeLandmarks[23]),
+          right_hip: getVisibility(safeLandmarks[24]),
         },
-        movement_checks: ['low_visibility_legs'],
+        movement_checks: ['invalid_landmarks'],
         current_phase: 'unreliable',
         captured_at: timestamp,
       };
     }
 
-    // Compute joint angles
-    const leftKneeAngle = calculateAngle(landmarks[23], landmarks[25], landmarks[27]);
-    const rightKneeAngle = calculateAngle(landmarks[24], landmarks[26], landmarks[28]);
     const avgKneeAngle = Math.round(((leftKneeAngle + rightKneeAngle) / 2) * 10) / 10;
-
-    const leftHipAngle = calculateAngle(landmarks[11] || landmarks[23], landmarks[23], landmarks[25]);
-    const rightHipAngle = calculateAngle(landmarks[12] || landmarks[24], landmarks[24], landmarks[26]);
+    const leftHipAngle = calculateAngle(safeLandmarks[11] ?? safeLandmarks[23], safeLandmarks[23], safeLandmarks[25]);
+    const rightHipAngle = calculateAngle(safeLandmarks[12] ?? safeLandmarks[24], safeLandmarks[24], safeLandmarks[26]);
 
     const movementChecks: string[] = [];
 
-    // Check knee caving / difference between knees
     if (Math.abs(leftKneeAngle - rightKneeAngle) > 20) {
       movementChecks.push('asymmetrical_knee_flexion');
     }
 
-    // State machine transitions
     if (avgKneeAngle >= this.config.standingAngle) {
       if (this.currentPhase === 'concentric' && this.reachedInflection) {
         this.repCount += 1;
@@ -105,15 +125,15 @@ export class SquatTracker {
       joint_angles: {
         left_knee: leftKneeAngle,
         right_knee: rightKneeAngle,
-        left_hip: leftHipAngle,
-        right_hip: rightHipAngle,
+        left_hip: Number.isFinite(leftHipAngle) ? leftHipAngle : null,
+        right_hip: Number.isFinite(rightHipAngle) ? rightHipAngle : null,
       },
       measurement_reliable: true,
       visibility: {
-        left_knee: landmarks[25]?.visibility ?? 1.0,
-        right_knee: landmarks[26]?.visibility ?? 1.0,
-        left_hip: landmarks[23]?.visibility ?? 1.0,
-        right_hip: landmarks[24]?.visibility ?? 1.0,
+        left_knee: getVisibility(safeLandmarks[25]),
+        right_knee: getVisibility(safeLandmarks[26]),
+        left_hip: getVisibility(safeLandmarks[23]),
+        right_hip: getVisibility(safeLandmarks[24]),
       },
       movement_checks: movementChecks,
       current_phase: this.currentPhase,
