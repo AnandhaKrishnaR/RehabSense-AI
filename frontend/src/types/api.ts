@@ -118,6 +118,8 @@ export interface VoiceTranscriptionResponse {
     suggested_pain_score: number | null;
     suggested_difficulty: string;
     body_area: string;
+    worsening_pain?: boolean;
+    clarification_needed?: string[];
   };
 }
 

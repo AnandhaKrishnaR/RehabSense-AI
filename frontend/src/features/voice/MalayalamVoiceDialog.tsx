@@ -46,8 +46,10 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [painScore, setPainScore] = useState<number | null>(null);
-  const [difficulty, setDifficulty] = useState<string>('moderate');
+  const [difficulty, setDifficulty] = useState<string>('');
   const [bodyArea, setBodyArea] = useState<string>('');
+  const [painDetected, setPainDetected] = useState(false);
+  const [worseningPain, setWorseningPain] = useState(false);
   const [hasExtracted, setHasExtracted] = useState(false);
   const [voiceFeedbackText, setVoiceFeedbackText] = useState<string | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -57,24 +59,27 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
   const audioChunksRef = useRef<Blob[]>([]);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const recognizedTextRef = useRef('');
+  const recognitionEndedRef = useRef<Promise<void>>(Promise.resolve());
 
   const applyExtractedSymptoms = (response: Awaited<ReturnType<typeof apiClient.transcribeAudio>>) => {
     if (!response.extracted_symptoms) {
       throw new Error('No symptom values were returned. Please try again.');
     }
     setPainScore(response.extracted_symptoms.suggested_pain_score);
-    setDifficulty(response.extracted_symptoms.suggested_difficulty || 'moderate');
+    setDifficulty(response.extracted_symptoms.suggested_difficulty || '');
     setBodyArea(response.extracted_symptoms.body_area || '');
+    setPainDetected(response.extracted_symptoms.pain_detected);
+    setWorseningPain(response.extracted_symptoms.worsening_pain || false);
     setHasExtracted(true);
   };
 
-  const analyzeTranscript = async () => {
-    if (!transcript.trim()) return;
+  const analyzeTranscript = async (sourceText = transcript) => {
+    if (!sourceText.trim()) return;
     setIsProcessing(true);
     setRecordingError(null);
     setVoiceStatus(null);
     try {
-      const response = await apiClient.analyzeSymptomText(transcript.trim(), 'ml');
+      const response = await apiClient.analyzeSymptomText(sourceText.trim(), 'ml');
       setTranscript(response.text);
       applyExtractedSymptoms(response);
       setVoiceStatus('വിവരങ്ങൾ കണക്കാക്കി. സ്ഥിരീകരിച്ച് രേഖപ്പെടുത്തുക.');
@@ -95,10 +100,10 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
 
   // Sample quick phrases in Malayalam for immediate testing / demo
   const samplePhrases = [
-    { label: 'കൈ ഉയർത്തുമ്പോൾ വേദന കൂടുന്നു (Pain increases on arm raise)', text: 'കൈ ഉയർത്തുമ്പോൾ വേദന കൂടുന്നു', pain: 6, diff: 'hard', area: 'shoulder' },
-    { label: 'കാൽമുട്ടിൽ ചെറിയ ബുദ്ധിമുട്ടുണ്ട് (Mild knee stiffness)', text: 'കാൽമുട്ടിൽ ചെറിയ ബുദ്ധിമുട്ടുണ്ട്', pain: 3, diff: 'moderate', area: 'knee' },
-    { label: 'വ്യായാമം ചെയ്യാൻ എളുപ്പമാണ് (Exercise feels comfortable)', text: 'വ്യായാമം ചെയ്യാൻ എളുപ്പമാണ്', pain: 0, diff: 'easy', area: '' },
-    { label: 'കടുത്ത നെഞ്ചുവേദന തോന്നുന്നു (Urgent: Severe chest pain)', text: 'കടുത്ത നെഞ്ചുവേദന തോന്നുന്നു', pain: 9, diff: 'very_hard', area: 'chest' },
+    { label: 'കൈ ഉയർത്തുമ്പോൾ വേദന 6/10 (Pain 6/10 on arm raise)', text: 'കൈ ഉയർത്തുമ്പോൾ വേദന 6/10 ആണ്, വളരെ ബുദ്ധിമുട്ടാണ്' },
+    { label: 'കാൽമുട്ടിൽ ചെറിയ വേദന 3/10 (Mild knee pain)', text: 'കാൽമുട്ടിൽ ചെറിയ വേദന 3/10' },
+    { label: 'വ്യായാമം ചെയ്യാൻ എളുപ്പം, വേദനയില്ല (Comfortable, no pain)', text: 'വേദനയില്ല. വ്യായാമം ചെയ്യാൻ എളുപ്പമാണ്' },
+    { label: 'നെഞ്ചിൽ കടുത്ത വേദന 9/10 (Urgent: severe chest pain)', text: 'നെഞ്ചിൽ കടുത്ത വേദന 9/10 തോന്നുന്നു' },
   ];
 
   const startRecording = async () => {
@@ -117,6 +122,9 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
           recognition.lang = 'ml-IN';
           recognition.continuous = true;
           recognition.interimResults = true;
+          recognitionEndedRef.current = new Promise<void>((resolve) => {
+            recognition.onend = () => resolve();
+          });
           recognition.onresult = (event) => {
             let finalText = '';
             let interimText = '';
@@ -148,11 +156,18 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
       mediaRecorder.onstop = async () => {
         setIsProcessing(true);
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const recognizedText = recognizedTextRef.current.trim();
+        mediaRecorder.stream.getTracks().forEach((track) => track.stop());
         try {
-          const res = recognizedText
-            ? await apiClient.analyzeSymptomText(recognizedText, 'ml')
-              .catch(() => apiClient.transcribeAudio(audioBlob, 'ml'))
+          await Promise.race([
+            recognitionEndedRef.current,
+            new Promise<void>((resolve) => window.setTimeout(resolve, 1200)),
+          ]);
+          const recognizedText = recognizedTextRef.current.trim();
+          const textResult = recognizedText
+            ? await apiClient.analyzeSymptomText(recognizedText, 'ml').catch(() => null)
+            : null;
+          const res = textResult?.text?.trim() && textResult.extracted_symptoms
+            ? textResult
             : await apiClient.transcribeAudio(audioBlob, 'ml');
           setTranscript(res.text);
           applyExtractedSymptoms(res);
@@ -180,19 +195,19 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
     if (mediaRecorderRef.current && isRecording) {
       speechRecognitionRef.current?.stop();
       mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
       setIsRecording(false);
     }
   };
 
   const selectSamplePhrase = (phrase: typeof samplePhrases[0]) => {
     setTranscript(phrase.text);
-    setPainScore(phrase.pain);
-    setDifficulty(phrase.diff);
-    setBodyArea(phrase.area);
-    setHasExtracted(true);
-    setVoiceStatus(`തിരഞ്ഞെടുത്തു: ${phrase.text}`);
-    speakMalayalam(`നിങ്ങൾ തിരഞ്ഞെടുത്തത്: ${phrase.text}`);
+    setPainScore(null);
+    setDifficulty('');
+    setBodyArea('');
+    setPainDetected(false);
+    setWorseningPain(false);
+    setHasExtracted(false);
+    void analyzeTranscript(phrase.text);
   };
 
   const replayTranscript = () => {
@@ -345,8 +360,10 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
               onChange={(e) => {
                 setTranscript(e.target.value);
                 setPainScore(null);
-                setDifficulty('moderate');
+                setDifficulty('');
                 setBodyArea('');
+                setPainDetected(false);
+                setWorseningPain(false);
                 setHasExtracted(false);
                 setVoiceStatus(null);
               }}
@@ -356,7 +373,7 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
             <button
               type="button"
               className="btn btn-outline"
-              onClick={analyzeTranscript}
+              onClick={() => void analyzeTranscript()}
               disabled={!transcript.trim() || isProcessing}
               style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
             >
@@ -390,9 +407,21 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
               </select>
               {painScore === null && (
                 <small style={{ color: 'var(--text-muted)' }}>
-                  {hasExtracted
-                    ? 'No numeric score was inferred. Confirm the patient’s 0–10 score before selecting a value.'
-                    : 'Record a phrase or calculate values from the transcript first.'}
+                  {!hasExtracted
+                    ? 'Record a phrase or calculate values from the transcript first.'
+                    : painDetected
+                      ? `Pain detected${worseningPain ? ' and reported as worsening' : ''}, but no numeric score was stated. Confirm the patient’s 0–10 score.`
+                      : 'No pain score was inferred from this transcript.'}
+                </small>
+              )}
+              {hasExtracted && painScore === 0 && (
+                <small style={{ display: 'block', color: 'var(--text-muted)' }}>
+                  No pain was reported; the calculated score is 0/10.
+                </small>
+              )}
+              {hasExtracted && painScore !== null && painScore > 0 && (
+                <small style={{ display: 'block', color: 'var(--text-muted)' }}>
+                  Score inferred from the transcript. Confirm it with the patient before saving.
                 </small>
               )}
             </div>
@@ -405,6 +434,7 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
                 onChange={(e) => setDifficulty(e.target.value)}
                 style={{ width: '100%', padding: '0.45rem', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.88rem' }}
               >
+                <option value="">Not inferred</option>
                 <option value="easy">Easy (ലളിതം)</option>
                 <option value="moderate">Moderate (മിതമായത്)</option>
                 <option value="hard">Hard (ബുദ്ധിമുട്ടുള്ളത്)</option>
