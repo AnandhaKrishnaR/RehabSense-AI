@@ -49,9 +49,9 @@ export function ProceduralHumanAvatar({
     if (!isPlaying && !liveAngles) return;
 
     if (isPlaying) {
-      timeRef.current += delta * speed * 1.8;
+      timeRef.current += delta * speed;
     }
-    const cycle = (Math.sin(timeRef.current) + 1) / 2; // 0 to 1
+    const cycle = (1 - Math.cos(timeRef.current)) / 2;
 
     // 1. SIDE-LYING MAT POSTURE (Matches the uploaded reference picture)
     if (postureMode === 'side_lying') {
@@ -111,9 +111,12 @@ export function ProceduralHumanAvatar({
 
     if (exerciseId === 'bodyweight_squat') {
       // Bodyweight Squat Kinematics
-      const kneeFlexionRad = liveAngles?.left_knee != null
-        ? THREE.MathUtils.degToRad(180 - liveAngles.left_knee)
-        : cycle * THREE.MathUtils.degToRad(75);
+      const kneeAngle = liveAngles?.left_knee != null && liveAngles.right_knee != null
+        ? (liveAngles.left_knee + liveAngles.right_knee) / 2
+        : liveAngles?.left_knee ?? liveAngles?.right_knee;
+      const kneeFlexionRad = kneeAngle != null
+        ? THREE.MathUtils.degToRad(180 - kneeAngle)
+        : cycle * THREE.MathUtils.degToRad(80);
 
       const hipFlexionRad = kneeFlexionRad * 0.85;
       const pelvisDrop = (kneeFlexionRad / 1.3) * 0.42;
@@ -145,10 +148,10 @@ export function ProceduralHumanAvatar({
         leftFootRef.current.rotation.set(-kneeFlexionRad * 0.18, 0, 0);
         rightFootRef.current.rotation.set(-kneeFlexionRad * 0.18, 0, 0);
       }
-      // Arms elevate forward for clinical balance
+      // Hold the arms forward for balance while descending.
       if (leftArmRef.current && rightArmRef.current) {
-        leftArmRef.current.rotation.set(-hipFlexionRad * 0.88 - 0.15, 0, -Math.PI / 2);
-        rightArmRef.current.rotation.set(-hipFlexionRad * 0.88 - 0.15, 0, Math.PI / 2);
+        leftArmRef.current.rotation.set(-Math.PI / 2 - hipFlexionRad * 0.2, 0, 0);
+        rightArmRef.current.rotation.set(-Math.PI / 2 - hipFlexionRad * 0.2, 0, 0);
       }
       if (leftForeArmRef.current && rightForeArmRef.current) {
         leftForeArmRef.current.rotation.set(-0.15, 0, 0);
@@ -156,9 +159,12 @@ export function ProceduralHumanAvatar({
       }
     } else {
       // Shoulder Flexion (Arm Raise) Kinematics
-      const armElevationRad = liveAngles?.left_shoulder != null
-        ? THREE.MathUtils.degToRad(liveAngles.left_shoulder)
-        : cycle * THREE.MathUtils.degToRad(120);
+      const leftElevationRad = THREE.MathUtils.degToRad(
+        THREE.MathUtils.clamp(liveAngles?.left_shoulder ?? cycle * 120, 0, 120),
+      );
+      const rightElevationRad = THREE.MathUtils.degToRad(
+        THREE.MathUtils.clamp(liveAngles?.right_shoulder ?? cycle * 120, 0, 120),
+      );
 
       // Neutral standing posture on mat
       if (bodyGroupRef.current) bodyGroupRef.current.position.set(0, 1.02, 0);
@@ -171,10 +177,10 @@ export function ProceduralHumanAvatar({
       if (leftFootRef.current) leftFootRef.current.rotation.set(0, 0, 0);
       if (rightFootRef.current) rightFootRef.current.rotation.set(0, 0, 0);
 
-      // Arms elevate smoothly forward and up
+      // Start with arms at the sides, then raise them forward through shoulder flexion.
       if (leftArmRef.current && rightArmRef.current) {
-        leftArmRef.current.rotation.set(0, 0, -Math.PI / 2 - armElevationRad);
-        rightArmRef.current.rotation.set(0, 0, Math.PI / 2 + armElevationRad);
+        leftArmRef.current.rotation.set(-leftElevationRad, 0, 0);
+        rightArmRef.current.rotation.set(-rightElevationRad, 0, 0);
       }
       if (leftForeArmRef.current && rightForeArmRef.current) {
         leftForeArmRef.current.rotation.set(0, 0, 0);
