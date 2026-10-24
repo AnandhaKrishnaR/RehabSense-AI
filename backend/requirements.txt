@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 requests>=2.31.0
 gTTS>=2.5.0
 sarvamai>=0.1.37
+gunicorn
