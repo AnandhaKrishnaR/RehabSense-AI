@@ -4,6 +4,7 @@ import { ExerciseDefinition, SessionRecord, SymptomReportPayload, SafetyEvaluati
 import { CanonicalExerciseId, MovementResult } from '../../types/vision';
 import { PhysiotherapyAvatar } from '../avatar/PhysiotherapyAvatar';
 import { usePoseLandmarker } from '../movement/usePoseLandmarker';
+import { formatAverageKneeAngle } from '../movement/angleDisplay';
 import { MalayalamVoiceDialog } from '../voice/MalayalamVoiceDialog';
 import { VoiceSettingsPanel } from '../voice/VoiceSettingsPanel';
 import { loadVoicePreferences } from '../voice/voicePreferences';
@@ -28,6 +29,23 @@ import {
   Volume2,
 } from 'lucide-react';
 import { Landmark } from '../movement/geometry';
+
+function formatMovementCheck(check: string): string {
+  const messages: Record<string, string> = {
+    asymmetrical_knee_flexion: 'Knee angles differ between sides.',
+    asymmetrical_shoulder_flexion: 'Your arms appear to be raising unevenly. Try to move both arms smoothly and evenly.',
+    incomplete_shoulder_raise: 'Raise your arm to the target height before lowering it.',
+    insufficient_squat_depth: 'Squat deeper before returning to standing.',
+    invalid_coordinates: 'Pose coordinates are invalid. Reposition yourself in the camera view.',
+    invalid_landmarks: 'Joint geometry is invalid. Reposition yourself and try again.',
+    invalid_visibility: 'Pose visibility data is invalid. Reposition yourself in the camera view.',
+    low_visibility_arms: 'Arm landmarks are obscured or below the visibility threshold.',
+    low_visibility_legs: 'Leg landmarks are obscured or below the visibility threshold.',
+    missing_landmarks: 'Required pose landmarks are missing. Make sure your full pose is in view.',
+  };
+
+  return messages[check] ?? check.replace(/_/g, ' ');
+}
 
 export function ExerciseSessionView() {
   const [exercises, setExercises] = useState<ExerciseDefinition[]>(DEMO_EXERCISES);
@@ -70,6 +88,17 @@ export function ExerciseSessionView() {
   }, []);
 
   const selectedExercise = exercises.find((e) => e.id === selectedExerciseId) || exercises[0];
+  const shoulderAngles = [
+    movementResult?.joint_angles?.left_shoulder,
+    movementResult?.joint_angles?.right_shoulder,
+  ].filter((angle): angle is number => typeof angle === 'number' && Number.isFinite(angle));
+  const shoulderFlexionDisplay = shoulderAngles.length > 0
+    ? `${Math.max(...shoulderAngles)}°`
+    : '--°';
+  const squatKneeAngleDisplay = formatAverageKneeAngle(
+    movementResult?.joint_angles?.left_knee,
+    movementResult?.joint_angles?.right_knee
+  );
 
   // Callback for pose landmarker stream
   const handleMovementResult = (result: MovementResult) => {
@@ -98,7 +127,7 @@ export function ExerciseSessionView() {
 
     // Periodically sync measurements with backend (every 2.5 seconds or on rep completion)
     const now = Date.now();
-    if (currentSession && sessionActive && !sessionPaused) {
+    if (currentSession && sessionActive && !sessionPaused && !isSimulated) {
       if (now - measurementThrottleRef.current > 2500 || result.current_phase === 'completed') {
         measurementThrottleRef.current = now;
         apiClient.submitMeasurement(currentSession.id, result);
@@ -119,11 +148,15 @@ export function ExerciseSessionView() {
       [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [29, 31],
       [24, 26], [26, 28], [28, 30], [30, 32],
     ];
-    const point = (index: number) => ({
-      x: (1 - landmarks[index].x) * canvas.width,
-      y: landmarks[index].y * canvas.height,
-      visible: (landmarks[index].visibility ?? 1) >= 0.35,
-    });
+    const point = (index: number) => {
+      const landmark = landmarks[index];
+      const validCoordinates = landmark && Number.isFinite(landmark.x) && Number.isFinite(landmark.y);
+      return {
+        x: validCoordinates ? (1 - landmark.x) * canvas.width : 0,
+        y: validCoordinates ? landmark.y * canvas.height : 0,
+        visible: !!validCoordinates && (landmark.visibility ?? 1) >= 0.35,
+      };
+    };
 
     context.strokeStyle = 'rgba(45, 212, 191, 0.88)';
     context.lineWidth = 3;
@@ -149,10 +182,14 @@ export function ExerciseSessionView() {
 
   const {
     isModelLoading,
+    modelError,
     cameraActive,
     isSimulated,
+    cameraError,
+    trackingError,
     startCamera,
     stopCamera,
+    resetTracking,
     setSimulationMode,
   } = usePoseLandmarker({
     exerciseId: selectedExerciseId,
@@ -160,6 +197,21 @@ export function ExerciseSessionView() {
     onLandmarks: handleLandmarks,
     enabled: sessionActive && !sessionPaused,
   });
+  const statusMessage = sessionPaused
+      ? 'Measurement paused; waiting for a new pose after resume.'
+    : isSimulated
+      ? 'Demo mode uses generated landmarks and does not represent webcam movement.'
+      : modelError
+      ? `Pose model unavailable: ${modelError}`
+      : cameraError
+        ? `Camera unavailable: ${cameraError}`
+        : trackingError
+          ? `Pose detection failed: ${trackingError}`
+          : isModelLoading
+            ? 'Loading the pose model.'
+            : cameraActive
+              ? 'Live camera active; waiting for a visible pose.'
+              : 'Live camera is not active.';
 
   // Start new exercise session
   const startSession = async () => {
@@ -176,18 +228,21 @@ export function ExerciseSessionView() {
         exercise_id: selectedExerciseId,
         target_reps: targetReps,
       });
+      resetTracking();
       setCurrentSession(sess);
       setSessionActive(true);
       setSessionPaused(false);
       setRepetitions(0);
+      setMovementResult(null);
       setSafetyAlert(null);
       setSessionSummary(null);
+      handleLandmarks(null);
       previousMovementResultRef.current = null;
       lastCoachMessageAtRef.current = 0;
 
       // Start webcam if video element exists
-      if (videoRef.current) {
-        startCamera(videoRef.current);
+      if (videoRef.current && !isSimulated) {
+        void startCamera(videoRef.current);
       }
     } catch (err: any) {
       console.error('Failed to create session:', err);
@@ -196,13 +251,20 @@ export function ExerciseSessionView() {
 
   // Pause / Resume session
   const togglePause = () => {
-    setSessionPaused(!sessionPaused);
+    const nextPaused = !sessionPaused;
+    if (nextPaused) {
+      setMovementResult(null);
+      handleLandmarks(null);
+    }
+    setSessionPaused(nextPaused);
   };
 
   // End exercise session
   const endSession = async () => {
     setSessionActive(false);
     stopCamera();
+    setMovementResult(null);
+    handleLandmarks(null);
 
     const summary = {
       exerciseName: selectedExercise.name,
@@ -274,9 +336,23 @@ export function ExerciseSessionView() {
         {/* Session Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {!sessionActive ? (
-            <button className="btn btn-primary" onClick={startSession} style={{ padding: '0.75rem 1.75rem', fontSize: '1rem' }}>
-              <Play size={18} /> Start Session
-            </button>
+            <>
+              <button
+                className="btn btn-outline"
+                onClick={() => {
+                  setSimulationMode(!isSimulated);
+                  setMovementResult(null);
+                  setRepetitions(0);
+                  handleLandmarks(null);
+                }}
+                title="Demo mode uses generated pose landmarks, not webcam measurements."
+              >
+                {isSimulated ? 'Use Live Camera' : 'Use Demo Kinematics'}
+              </button>
+              <button className="btn btn-primary" onClick={startSession} style={{ padding: '0.75rem 1.75rem', fontSize: '1rem' }}>
+                <Play size={18} /> Start Session
+              </button>
+            </>
           ) : (
             <>
               <button className="btn btn-outline" onClick={togglePause}>
@@ -422,10 +498,35 @@ export function ExerciseSessionView() {
             </div>
 
             {/* Landmark Reliability Badge */}
-            <span className={`badge ${movementResult?.measurement_reliable !== false ? 'badge-success' : 'badge-danger'}`}>
-              {movementResult?.measurement_reliable !== false ? 'Landmarks Reliable' : 'Low Visibility'}
+            <span className={`badge ${
+              sessionPaused
+                ? 'badge-info'
+                : isSimulated
+                  ? 'badge-warning'
+                : movementResult?.measurement_reliable
+                  ? 'badge-success'
+                  : movementResult || modelError || cameraError || trackingError
+                    ? 'badge-danger'
+                    : 'badge-info'
+            }`}>
+              {sessionPaused
+                ? 'Paused'
+                : isSimulated
+                  ? 'Synthetic Data'
+                : movementResult
+                  ? movementResult.measurement_reliable ? 'Landmarks Reliable' : 'Unreliable Landmarks'
+                  : modelError || cameraError || trackingError
+                    ? 'Tracking Unavailable'
+                    : cameraActive
+                      ? 'Waiting for Pose'
+                      : isModelLoading ? 'Loading Model' : 'Camera Standby'}
             </span>
           </div>
+          {!isSimulated && (modelError || cameraError || trackingError) && (
+            <div role="alert" style={{ marginBottom: '0.75rem', padding: '0.65rem 0.8rem', borderRadius: '6px', background: '#fef2f2', color: '#991b1b', fontSize: '0.85rem' }}>
+              {statusMessage}
+            </div>
+          )}
 
           {/* Video / Pose Canvas Viewport */}
           <div style={{
@@ -460,17 +561,15 @@ export function ExerciseSessionView() {
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
             />
 
-            {/* Simulated / Fallback Kinematic Overlay when camera is simulated */}
+            {/* Status overlay when live video is not displayed. */}
             {(!cameraActive || isSimulated) && (
               <div style={{ textAlign: 'center', color: '#94a3b8', padding: '1.5rem' }}>
                 <Video size={48} color="#0284c7" style={{ margin: '0 auto 1rem' }} />
                 <h4 style={{ color: '#f8fafc', margin: '0 0 0.5rem' }}>
-                  {sessionActive ? 'Pose Landmarker Active' : 'Webcam Standby'}
+                  {isSimulated ? 'Demo Kinematics' : cameraActive ? 'Live Camera Active' : 'Webcam Standby'}
                 </h4>
                 <p style={{ fontSize: '0.85rem', maxWidth: '340px', margin: '0 auto' }}>
-                  {sessionActive
-                    ? 'Processing joint landmarks and repetition state transitions in real time.'
-                    : 'Click "Start Session" to activate camera pose tracking.'}
+                  {statusMessage}
                 </p>
               </div>
             )}
@@ -518,8 +617,8 @@ export function ExerciseSessionView() {
                   </div>
                   <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#4ade80' }}>
                     {selectedExerciseId === 'bodyweight_squat'
-                      ? `${movementResult?.joint_angles?.left_knee ?? '--'}°`
-                      : `${movementResult?.joint_angles?.left_shoulder ?? '--'}°`}
+                      ? squatKneeAngleDisplay
+                      : shoulderFlexionDisplay}
                   </div>
                 </div>
               </div>
@@ -555,7 +654,7 @@ export function ExerciseSessionView() {
           {movementResult && (
             <div role="status" style={{ marginTop: '0.65rem', padding: '0.65rem 0.8rem', borderRadius: '6px', background: movementResult.movement_checks.length ? '#fffbeb' : '#f0fdf4', color: movementResult.movement_checks.length ? '#92400e' : '#166534', fontSize: '0.85rem' }}>
               {movementResult.movement_checks.length
-                ? movementResult.movement_checks.map((check) => check.replace(/_/g, ' ')).join(' · ')
+                ? movementResult.movement_checks.map(formatMovementCheck).join(' · ')
                 : 'No movement feedback flags.'}
             </div>
           )}

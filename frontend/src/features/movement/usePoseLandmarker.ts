@@ -4,6 +4,7 @@ import { CanonicalExerciseId, MovementResult } from '../../types/vision';
 import { SquatTracker } from './squatTracker';
 import { ShoulderFlexionTracker } from './shoulderFlexionTracker';
 import { Landmark } from './geometry';
+import { isNewVideoFrame, isVideoFrameStale, resolvePoseFrameSource } from './videoFrameUtils';
 
 export interface UsePoseLandmarkerOptions {
   exerciseId: CanonicalExerciseId;
@@ -18,6 +19,8 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
   const [cameraActive, setCameraActive] = useState(false);
   const [lastResult, setLastResult] = useState<MovementResult | null>(null);
   const [isSimulated, setIsSimulated] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
 
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
   const squatTrackerRef = useRef(new SquatTracker());
@@ -25,13 +28,38 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const requestRef = useRef<number | null>(null);
   const simStepRef = useRef<number>(0);
+  const lastProcessedVideoTimeRef = useRef<number | null>(null);
+  const lastProcessedVideoAtRef = useRef<number | null>(null);
+  const staleFrameReportedRef = useRef(false);
+
+  const resetTracking = useCallback(() => {
+    squatTrackerRef.current.reset();
+    shoulderTrackerRef.current.reset();
+    simStepRef.current = 0;
+    lastProcessedVideoTimeRef.current = null;
+    lastProcessedVideoAtRef.current = null;
+    staleFrameReportedRef.current = false;
+    setLastResult(null);
+    setTrackingError(null);
+  }, []);
+
+  const setSimulationMode = useCallback((enabled: boolean) => {
+    resetTracking();
+    setCameraError(null);
+    setIsSimulated(enabled);
+  }, [resetTracking]);
 
   // Reset trackers on exercise change
   useEffect(() => {
-    squatTrackerRef.current.reset();
-    shoulderTrackerRef.current.reset();
-    setLastResult(null);
-  }, [exerciseId]);
+    resetTracking();
+  }, [exerciseId, resetTracking]);
+
+  useEffect(() => {
+    if (!enabled) {
+      squatTrackerRef.current.discardIncompleteMovement();
+      shoulderTrackerRef.current.discardIncompleteMovement();
+    }
+  }, [enabled]);
 
   // Initialize MediaPipe PoseLandmarker
   useEffect(() => {
@@ -63,14 +91,15 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
 
         if (active) {
           landmarkerRef.current = landmarker;
+          setModelError(null);
           setIsModelLoading(false);
         }
-      } catch (err: any) {
-        console.warn('[RehabSense Vision] MediaPipe WebGL initialization notice:', err.message);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[RehabSense Vision] MediaPipe initialization failed:', message);
         if (active) {
-          setModelError('MediaPipe model running in fallback/simulated kinematic mode.');
+          setModelError(message);
           setIsModelLoading(false);
-          setIsSimulated(true);
         }
       }
     }
@@ -96,31 +125,55 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
     let currentLandmarks: Landmark[] | null = null;
+    let hasNewLandmarks = false;
+    const frameSource = resolvePoseFrameSource(
+      isSimulated,
+      !!video && video.readyState >= 2,
+      !!landmarker
+    );
 
-    if (landmarker && video && video.readyState >= 2 && !isSimulated) {
-      try {
-        const startTimeMs = performance.now();
-        const results = landmarker.detectForVideo(video, startTimeMs);
-
-        if (results.landmarks && results.landmarks.length > 0) {
-          const rawLandmarks = results.landmarks[0] as Landmark[];
-          currentLandmarks = rawLandmarks;
-          let res: MovementResult;
-
-          if (exerciseId === 'bodyweight_squat') {
-            res = squatTrackerRef.current.processFrame(rawLandmarks);
-          } else {
-            res = shoulderTrackerRef.current.processFrame(rawLandmarks);
-          }
-
+    if (frameSource === 'live' && landmarker && video) {
+      const now = performance.now();
+      if (isNewVideoFrame(video.currentTime, lastProcessedVideoTimeRef.current)) {
+        if (isVideoFrameStale(now, lastProcessedVideoAtRef.current)) {
+          squatTrackerRef.current.discardIncompleteMovement();
+          shoulderTrackerRef.current.discardIncompleteMovement();
+        }
+        lastProcessedVideoTimeRef.current = video.currentTime;
+        lastProcessedVideoAtRef.current = now;
+        staleFrameReportedRef.current = false;
+        hasNewLandmarks = true;
+        try {
+          const results = landmarker.detectForVideo(video, now);
+          currentLandmarks = results.landmarks?.[0] as Landmark[] | undefined ?? null;
+          const res = exerciseId === 'bodyweight_squat'
+            ? squatTrackerRef.current.processFrame(currentLandmarks)
+            : shoulderTrackerRef.current.processFrame(currentLandmarks);
           setLastResult(res);
           onMovementResult?.(res);
+          setTrackingError(null);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          const res = exerciseId === 'bodyweight_squat'
+            ? squatTrackerRef.current.processFrame(null)
+            : shoulderTrackerRef.current.processFrame(null);
+          setLastResult(res);
+          onMovementResult?.(res);
+          setTrackingError(message);
         }
-      } catch (err) {
-        // Continue loop without crashing
+      } else if (!staleFrameReportedRef.current && isVideoFrameStale(now, lastProcessedVideoAtRef.current)) {
+        staleFrameReportedRef.current = true;
+        hasNewLandmarks = true;
+        const res = exerciseId === 'bodyweight_squat'
+          ? squatTrackerRef.current.processFrame(null)
+          : shoulderTrackerRef.current.processFrame(null);
+        setLastResult(res);
+        onMovementResult?.(res);
+        setTrackingError('No new camera frames received.');
       }
-    } else if (isSimulated && enabled) {
+    } else if (frameSource === 'demo' && enabled) {
       // Synthetic kinematic demonstration stream
+      hasNewLandmarks = true;
       simStepRef.current = (simStepRef.current + 1) % 120;
       const progress = simStepRef.current / 120; // 0 to 1
       const sinWave = (Math.sin(progress * Math.PI * 2 - Math.PI / 2) + 1) / 2; // 0 to 1
@@ -161,9 +214,10 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
 
       setLastResult(res);
       onMovementResult?.(res);
+      setTrackingError(null);
     }
 
-    onLandmarks?.(currentLandmarks);
+    if (hasNewLandmarks) onLandmarks?.(currentLandmarks);
     requestRef.current = requestAnimationFrame(processFrame);
   }, [enabled, exerciseId, isSimulated, onLandmarks, onMovementResult]);
 
@@ -177,24 +231,33 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
   // Start webcam
   const startCamera = async (videoElement: HTMLVideoElement) => {
     videoRef.current = videoElement;
+    setCameraError(null);
+    setTrackingError(null);
+    setIsSimulated(false);
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' },
         audio: false,
       });
       videoElement.srcObject = stream;
       await videoElement.play();
       setCameraActive(true);
-      setIsSimulated(false);
-    } catch (err: any) {
-      console.warn('[RehabSense Vision] Webcam access not granted or unavailable, switching to demo mode:', err.message);
-      setIsSimulated(true);
-      setCameraActive(true);
+    } catch (err: unknown) {
+      stream?.getTracks().forEach((track) => track.stop());
+      if (videoElement.srcObject === stream) videoElement.srcObject = null;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[RehabSense Vision] Webcam initialization failed:', message);
+      setCameraActive(false);
+      setCameraError(message);
     }
   };
 
   const stopCamera = () => {
     onLandmarks?.(null);
+    lastProcessedVideoTimeRef.current = null;
+    lastProcessedVideoAtRef.current = null;
+    staleFrameReportedRef.current = false;
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
@@ -208,9 +271,12 @@ export function usePoseLandmarker({ exerciseId, onMovementResult, onLandmarks, e
     modelError,
     cameraActive,
     isSimulated,
+    cameraError,
+    trackingError,
     lastResult,
+    resetTracking,
     startCamera,
     stopCamera,
-    setSimulationMode: setIsSimulated,
+    setSimulationMode,
   };
 }

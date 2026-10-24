@@ -70,25 +70,45 @@ export function checkVisibility(
   landmarks: Landmark[] | null | undefined,
   requiredIndices: number[],
   minThreshold = 0.65
-): { reliable: boolean; minFoundVisibility: number; missingIndices: number[] } {
+): {
+  reliable: boolean;
+  minFoundVisibility: number;
+  missingIndices: number[];
+  lowVisibilityIndices: number[];
+  invalidCoordinateIndices: number[];
+  invalidVisibilityIndices: number[];
+} {
   let reliable = true;
   let minFoundVisibility = 1.0;
   const missingIndices: number[] = [];
+  const lowVisibilityIndices: number[] = [];
+  const invalidCoordinateIndices: number[] = [];
+  const invalidVisibilityIndices: number[] = [];
 
   if (!Array.isArray(landmarks)) {
     return {
       reliable: false,
       minFoundVisibility: 0,
       missingIndices: requiredIndices,
+      lowVisibilityIndices,
+      invalidCoordinateIndices,
+      invalidVisibilityIndices,
     };
   }
 
   for (const idx of requiredIndices) {
     const lm = landmarks[idx];
-    if (!lm || !hasValidCoordinates(lm)) {
+    if (!lm) {
       reliable = false;
       minFoundVisibility = 0.0;
       missingIndices.push(idx);
+      continue;
+    }
+
+    if (!hasValidCoordinates(lm)) {
+      reliable = false;
+      minFoundVisibility = 0.0;
+      invalidCoordinateIndices.push(idx);
       continue;
     }
 
@@ -96,7 +116,7 @@ export function checkVisibility(
     if (!isFiniteNumber(vis) || vis < 0 || vis > 1) {
       reliable = false;
       minFoundVisibility = 0.0;
-      missingIndices.push(idx);
+      invalidVisibilityIndices.push(idx);
       continue;
     }
 
@@ -105,7 +125,7 @@ export function checkVisibility(
     }
     if (vis < minThreshold) {
       reliable = false;
-      missingIndices.push(idx);
+      lowVisibilityIndices.push(idx);
     }
   }
 
@@ -113,5 +133,8 @@ export function checkVisibility(
     reliable,
     minFoundVisibility: Math.round(minFoundVisibility * 100) / 100,
     missingIndices,
+    lowVisibilityIndices,
+    invalidCoordinateIndices,
+    invalidVisibilityIndices,
   };
 }
