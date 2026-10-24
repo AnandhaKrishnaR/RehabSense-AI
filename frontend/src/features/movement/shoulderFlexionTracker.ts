@@ -127,7 +127,7 @@ export class ShoulderFlexionTracker {
     }
 
     if (trackingAngle <= this.config.restingAngle) {
-      if (this.currentPhase === 'concentric' && this.reachedPeak) {
+      if (this.reachedPeak) {
         this.repCount += 1;
         this.currentPhase = 'completed';
         this.reachedPeak = false;

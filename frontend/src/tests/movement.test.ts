@@ -477,6 +477,20 @@ describe('ShoulderFlexionTracker State Machine', () => {
     expect(res.movement_checks).not.toContain('incomplete_shoulder_raise');
   });
 
+  it('counts a peak-to-rest shoulder raise exactly once even when intermediate lowering frames are skipped', () => {
+    const tracker = new ShoulderFlexionTracker({ peakAngle: 120.0, restingAngle: 30.0 });
+
+    tracker.processFrame(makeShoulderLandmarks(130));
+    const returned = tracker.processFrame(makeShoulderLandmarks(20));
+    expect(returned.current_phase).toBe('completed');
+    expect(returned.repetitions).toBe(1);
+
+    for (let frame = 0; frame < 5; frame++) {
+      const resting = tracker.processFrame(makeShoulderLandmarks(20));
+      expect(resting.repetitions).toBe(1);
+    }
+  });
+
   it('reports an incomplete raise when a reliable attempt returns to rest before the peak', () => {
     const tracker = new ShoulderFlexionTracker({ peakAngle: 120.0, restingAngle: 30.0 });
 
