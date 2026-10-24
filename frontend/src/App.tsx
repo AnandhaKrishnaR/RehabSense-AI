@@ -9,6 +9,7 @@ import {
   Heart,
   HeartPulse,
   Home,
+  LogOut,
   Menu,
   MessageCircle,
   PersonStanding,
@@ -22,6 +23,7 @@ import { HealthResponse } from './types/api';
 import { ExerciseSessionView } from './features/sessions/ExerciseSessionView';
 import { ClinicianDashboardView } from './features/clinician/ClinicianDashboardView';
 import { ProgressView } from './features/progress/ProgressView';
+import { LoginView, WorkspaceRole } from './features/auth/LoginView';
 import { VoiceEvaluationLab } from './features/voice/VoiceEvaluationLab';
 import {
   CaregiverDashboard,
@@ -32,8 +34,6 @@ import {
   PatientCareTeam,
   PatientOverview,
 } from './features/dashboard/RoleDashboardViews';
-
-type WorkspaceRole = 'patient' | 'physiotherapist' | 'caregiver';
 
 const roleOptions: Array<{ id: WorkspaceRole; label: string; description: string }> = [
   { id: 'patient', label: 'Patient', description: 'Anjali Nair' },
@@ -74,6 +74,7 @@ export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
     apiClient.getHealth().then(setHealth);
@@ -90,6 +91,13 @@ export default function App() {
   const navigate = (nextPage: DashboardPage) => {
     setPage(nextPage);
     setVoiceLabOpen(false);
+    setMenuOpen(false);
+    setNotificationsOpen(false);
+  };
+
+  const signOut = () => {
+    setAuthenticated(false);
+    setPage('overview');
     setMenuOpen(false);
     setNotificationsOpen(false);
   };
@@ -123,6 +131,10 @@ export default function App() {
     : role === 'caregiver'
     ? [{ title: 'Anjali’s morning routine', detail: '3 gentle steps in today’s plan', page: 'schedule' as DashboardPage }]
     : [{ title: 'Your care-team check-in', detail: 'Friday at 10:30 AM with Dr. Meera Shah', page: 'care-team' as DashboardPage }];
+
+  if (!authenticated) {
+    return <LoginView onLogin={(nextRole) => { setRole(nextRole); setAuthenticated(true); }} />;
+  }
 
   return (
     <div className={`app-shell role-${role}`}>
@@ -160,7 +172,7 @@ export default function App() {
           </button>
           {notificationsOpen && <div className="notification-popover"><div className="popover-title">Notifications <span>{unreadCount} new</span></div>{notifications.map((notification) => <button key={notification.title} className="notification-item" onClick={() => navigate(notification.page)}><span className="notification-icon"><FileHeart size={16} /></span><span><strong>{notification.title}</strong><small>{notification.detail}</small></span></button>)}<div className="popover-foot">Updates shown for this workspace preview</div></div>}
         </div>
-        <div className="profile-chip"><span className="profile-avatar">{role === 'patient' ? 'AN' : role === 'physiotherapist' ? 'MS' : 'LN'}</span><span className="profile-copy"><strong>{roleNames[role]}</strong><small>{roleOptions.find((option) => option.id === role)?.label}</small></span></div>
+        <div className="profile-chip"><span className="profile-avatar">{role === 'patient' ? 'AN' : role === 'physiotherapist' ? 'MS' : 'LN'}</span><span className="profile-copy"><strong>{roleNames[role]}</strong><small>{roleOptions.find((option) => option.id === role)?.label}</small></span><button className="icon-button sign-out-button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={17} /></button></div>
       </header>
 
       <div className="app-body">

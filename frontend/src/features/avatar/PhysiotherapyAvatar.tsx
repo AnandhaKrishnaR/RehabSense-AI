@@ -23,7 +23,6 @@ import {
   HelpCircle,
   FileCode,
   X,
-  Activity,
 } from 'lucide-react';
 
 interface AvatarModelProps {
@@ -128,9 +127,9 @@ function ProceduralSkeletalDriver({
     if (!isPlaying && !liveAngles) return;
 
     if (isPlaying) {
-      timeRef.current += delta * speed * 1.8;
+      timeRef.current += delta * speed;
     }
-    const cycle = (Math.sin(timeRef.current) + 1) / 2;
+    const cycle = (1 - Math.cos(timeRef.current)) / 2;
 
     const qThigh = new THREE.Quaternion();
     const qKnee = new THREE.Quaternion();
@@ -138,9 +137,12 @@ function ProceduralSkeletalDriver({
     const qArm = new THREE.Quaternion();
 
     if (exerciseId === 'bodyweight_squat') {
-      const kneeFlexionRad = liveAngles?.left_knee != null
-        ? THREE.MathUtils.degToRad(180 - liveAngles.left_knee)
-        : cycle * THREE.MathUtils.degToRad(75);
+      const kneeAngle = liveAngles?.left_knee != null && liveAngles.right_knee != null
+        ? (liveAngles.left_knee + liveAngles.right_knee) / 2
+        : liveAngles?.left_knee ?? liveAngles?.right_knee;
+      const kneeFlexionRad = kneeAngle != null
+        ? THREE.MathUtils.degToRad(180 - kneeAngle)
+        : cycle * THREE.MathUtils.degToRad(80);
 
       const hipFlexionRad = kneeFlexionRad * 0.85;
       const pelvisDrop = (kneeFlexionRad / 1.3) * 0.45;
@@ -194,9 +196,12 @@ function ProceduralSkeletalDriver({
       }
     } else {
       // Shoulder Flexion (Arm Raise)
-      const armElevationRad = liveAngles?.left_shoulder != null
-        ? THREE.MathUtils.degToRad(liveAngles.left_shoulder)
-        : cycle * THREE.MathUtils.degToRad(120);
+      const leftElevationRad = THREE.MathUtils.degToRad(
+        THREE.MathUtils.clamp(liveAngles?.left_shoulder ?? cycle * 120, 0, 120),
+      );
+      const rightElevationRad = THREE.MathUtils.degToRad(
+        THREE.MathUtils.clamp(liveAngles?.right_shoulder ?? cycle * 120, 0, 120),
+      );
 
       // Reset lower body & torso to rest pose
       if (bones.hips) {
@@ -228,14 +233,19 @@ function ProceduralSkeletalDriver({
       }
 
       // Raise arms upward
-      qArm.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -armElevationRad);
       if (bones.leftArm) {
         const rest = restTransforms.get(bones.leftArm);
-        if (rest) bones.leftArm.quaternion.copy(rest.quat).multiply(qArm);
+        if (rest) {
+          qArm.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -leftElevationRad);
+          bones.leftArm.quaternion.copy(rest.quat).multiply(qArm);
+        }
       }
       if (bones.rightArm) {
         const rest = restTransforms.get(bones.rightArm);
-        if (rest) bones.rightArm.quaternion.copy(rest.quat).multiply(qArm);
+        if (rest) {
+          qArm.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -rightElevationRad);
+          bones.rightArm.quaternion.copy(rest.quat).multiply(qArm);
+        }
       }
     }
   });
@@ -381,7 +391,6 @@ export function PhysiotherapyAvatar({
   const [speed, setSpeed] = useState(1.0);
   const [mirror, setMirror] = useState(false);
   const [replayKey, setReplayKey] = useState(0);
-  const [postureMode, setPostureMode] = useState<AvatarPostureMode>('standing');
 
   // Model URL resolution
   const resolvedModelUrl = useMemo(() => resolveAvatarModelUrl(modelUrl), [modelUrl]);
@@ -453,7 +462,7 @@ export function PhysiotherapyAvatar({
       liveAngles={liveAngles}
       mirror={mirror}
       replayKey={replayKey}
-      postureMode={postureMode}
+      postureMode="standing"
     />
   );
 
@@ -470,7 +479,7 @@ export function PhysiotherapyAvatar({
           position: 'relative',
         }}
       >
-        <Canvas camera={{ position: postureMode === 'side_lying' ? [0, 1.25, 3.2] : [0, 1.8, 3.5], fov: 38 }}>
+        <Canvas camera={{ position: [0, 1.8, 3.5], fov: 38 }}>
           {/* Warm Studio Lighting for 3D Aesthetic */}
           <color attach="background" args={['#edf7fc']} />
           <ambientLight intensity={0.8} />
@@ -496,7 +505,7 @@ export function PhysiotherapyAvatar({
                   mirror={mirror}
                   replayKey={replayKey}
                   onDiagnostics={setDiagnostics}
-                  postureMode={postureMode}
+                  postureMode="standing"
                 />
               </Suspense>
             </AvatarLoadBoundary>
@@ -505,7 +514,7 @@ export function PhysiotherapyAvatar({
           )}
 
           <OrbitControls
-            target={postureMode === 'side_lying' ? [0, 0.3, 0] : [0, 1.05, 0]}
+            target={[0, 1.05, 0]}
             enablePan={false}
             maxPolarAngle={Math.PI / 2 + 0.05}
             minDistance={1.4}
@@ -532,15 +541,7 @@ export function PhysiotherapyAvatar({
             gap: '0.35rem',
           }}
         >
-          {postureMode === 'side_lying' ? (
-            <>
-              <Activity size={13} color="#db2777" /> Mat Exercise: Side-Lying Hip Abduction
-            </>
-          ) : (
-            <>
-              <CheckCircle2 size={13} color="#0d9488" /> Friendly 3D Exercise Guide
-            </>
-          )}
+          <CheckCircle2 size={13} color="#0d9488" /> {exerciseId === 'bodyweight_squat' ? 'Bodyweight Squat' : 'Shoulder Flexion'}
         </div>
 
         {/* Diagnostics & Setup Info Pill */}
@@ -631,23 +632,6 @@ export function PhysiotherapyAvatar({
             <Eye size={13} /> {mirror ? 'Normal' : 'Mirror'}
           </button>
 
-          {/* Side-Lying Mat Exercise vs Standing Toggle */}
-          <button
-            className="btn btn-outline"
-            style={{
-              padding: '0.35rem 0.6rem',
-              fontSize: '0.78rem',
-              background: postureMode === 'side_lying' ? '#fdf2f8' : '#f8fafc',
-              borderColor: postureMode === 'side_lying' ? '#f472b6' : 'var(--border)',
-              color: postureMode === 'side_lying' ? '#be185d' : 'inherit',
-              fontWeight: postureMode === 'side_lying' ? 600 : 400,
-            }}
-            onClick={() => setPostureMode((p) => (p === 'standing' ? 'side_lying' : 'standing'))}
-            title="Toggle between Standing Form and Mat Side-Lying Leg Raise"
-          >
-            <Activity size={13} /> {postureMode === 'standing' ? 'Mat Pose (Photo)' : 'Standing Form'}
-          </button>
-
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.78rem' }}>
@@ -724,13 +708,11 @@ export function PhysiotherapyAvatar({
               <ul style={{ margin: '0 0 1rem', paddingLeft: '1.2rem' }}>
                 <li>
                   <strong>Avatar Style</strong>:{' '}
-                  Glossy blue toy-like humanoid
+                  Green-shirted, friendly procedural guide
                 </li>
                 <li>
                   <strong>Active Posture</strong>:{' '}
-                  {postureMode === 'standing'
-                    ? `Standing Biomechanics (${exerciseId})`
-                    : 'Side-Lying Mat Exercise (Hip Abduction)'}
+                  `Standing ${exerciseId === 'bodyweight_squat' ? 'squat' : 'shoulder flexion'} demonstration`
                 </li>
                 <li>
                   <strong>Configured GLB Path</strong>:{' '}
