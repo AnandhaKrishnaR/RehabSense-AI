@@ -237,6 +237,10 @@ class MalayalamSymptomExtractor(BaseSymptomExtractor):
         return cls._score_word_values.get(score_text)
 
 
+def extract_symptoms_from_text(text: str, language: str = 'ml') -> dict:
+    return MalayalamSymptomExtractor().extract_symptoms(text, language=language)
+
+
 class SarvamSTTProvider(BaseSTTProvider):
     """
     Official Sarvam AI Malayalam Speech-to-Text adapter (Saaras model).

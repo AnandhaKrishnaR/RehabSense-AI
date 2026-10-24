@@ -2,7 +2,9 @@ from django.test import TestCase
 from django.urls import reverse
 from django.contrib.auth.models import User
 from rest_framework import status
+from django.utils import timezone
 from apps.rehabilitation.models import Exercise, RehabilitationSession, SymptomReport
+from apps.movement.models import MovementMeasurement
 from apps.safety.models import ClinicianReviewFlag, ReviewResolutionAudit
 
 class ReportingAndClinicianReviewTests(TestCase):
@@ -27,6 +29,19 @@ class ReportingAndClinicianReviewTests(TestCase):
             completed_reps=8,
             review_required=True,
         )
+        self.symptom = SymptomReport.objects.create(
+            session=self.session,
+            raw_transcript="വേദനയുണ്ട്",
+            pain_score=7,
+            patient_confirmed=True,
+        )
+        self.measurement = MovementMeasurement.objects.create(
+            session=self.session,
+            captured_at=timezone.now(),
+            repetitions=8,
+            joint_angles={"left_knee": 92.0, "right_knee": 94.0},
+            measurement_reliable=True,
+        )
         self.flag = ClinicianReviewFlag.objects.create(
             session=self.session,
             status='pending',
@@ -42,6 +57,8 @@ class ReportingAndClinicianReviewTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['status'], 'pending')
+        self.assertEqual(response.data[0]['latest_pain_score'], 7)
+        self.assertEqual(response.data[0]['measurements_count'], 1)
 
     def test_get_clinician_reviews_as_patient_denied(self):
         self.client.force_login(self.patient1)
@@ -77,6 +94,21 @@ class ReportingAndClinicianReviewTests(TestCase):
         self.assertIn('completed_exercises', response.data)
         self.assertIn('bodyweight_squat', response.data['completed_exercises'])
         self.assertIn('shoulder_flexion', response.data['completed_exercises'])
+
+        squat_stats = response.data['completed_exercises']['bodyweight_squat']
+        self.assertEqual(squat_stats['total_reps'], 8)
+        self.assertEqual(squat_stats['average_knee_flexion'], 92.0)
+        self.assertEqual(squat_stats['average_primary_angle'], 92.0)
+
+    def test_get_session_json_report(self):
+        url = reverse('reporting:session-report', kwargs={'session_id': self.session.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['session_id'], str(self.session.id))
+        self.assertEqual(response.data['exercise'], 'bodyweight_squat')
+        self.assertEqual(response.data['measurements_count'], 1)
+        self.assertEqual(response.data['symptoms_count'], 1)
+        self.assertEqual(len(response.data['flags']), 1)
 
     def test_get_session_csv_report(self):
         self.client.force_login(self.patient1)

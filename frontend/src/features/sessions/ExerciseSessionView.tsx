@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   Volume2,
 } from 'lucide-react';
+import { Landmark } from '../movement/geometry';
 
 export function ExerciseSessionView() {
   const [exercises, setExercises] = useState<ExerciseDefinition[]>(DEMO_EXERCISES);
@@ -39,11 +40,13 @@ export function ExerciseSessionView() {
   const [movementResult, setMovementResult] = useState<MovementResult | null>(null);
   const [safetyAlert, setSafetyAlert] = useState<SafetyEvaluationResponse | null>(null);
   const [showVoiceDialog, setShowVoiceDialog] = useState(false);
+  const [spokenFeedback, setSpokenFeedback] = useState<string | null>(null);
   const [sessionSummary, setSessionSummary] = useState<any | null>(null);
   const [voiceTemplates, setVoiceTemplates] = useState<Record<string, VoiceTemplate>>({});
   const [voicePlaybackError, setVoicePlaybackError] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const landmarkCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const measurementThrottleRef = useRef<number>(0);
   const previousMovementResultRef = useRef<MovementResult | null>(null);
   const lastCoachMessageAtRef = useRef(0);
@@ -103,6 +106,47 @@ export function ExerciseSessionView() {
     }
   };
 
+  const handleLandmarks = (landmarks: Landmark[] | null) => {
+    const canvas = landmarkCanvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context) return;
+
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!landmarks) return;
+
+    const connections = [
+      [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
+      [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [29, 31],
+      [24, 26], [26, 28], [28, 30], [30, 32],
+    ];
+    const point = (index: number) => ({
+      x: (1 - landmarks[index].x) * canvas.width,
+      y: landmarks[index].y * canvas.height,
+      visible: (landmarks[index].visibility ?? 1) >= 0.35,
+    });
+
+    context.strokeStyle = 'rgba(45, 212, 191, 0.88)';
+    context.lineWidth = 3;
+    for (const [start, end] of connections) {
+      const first = point(start);
+      const second = point(end);
+      if (!first.visible || !second.visible) continue;
+      context.beginPath();
+      context.moveTo(first.x, first.y);
+      context.lineTo(second.x, second.y);
+      context.stroke();
+    }
+
+    context.fillStyle = '#facc15';
+    landmarks.forEach((_, index) => {
+      const joint = point(index);
+      if (!joint.visible) return;
+      context.beginPath();
+      context.arc(joint.x, joint.y, 5, 0, Math.PI * 2);
+      context.fill();
+    });
+  };
+
   const {
     isModelLoading,
     cameraActive,
@@ -113,6 +157,7 @@ export function ExerciseSessionView() {
   } = usePoseLandmarker({
     exerciseId: selectedExerciseId,
     onMovementResult: handleMovementResult,
+    onLandmarks: handleLandmarks,
     enabled: sessionActive && !sessionPaused,
   });
 
@@ -302,6 +347,13 @@ export function ExerciseSessionView() {
         </div>
       )}
 
+      {spokenFeedback && (
+        <div lang="ml" role="status" style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', padding: '0.85rem 1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.65rem', color: '#065f46' }}>
+          <Volume2 size={20} />
+          <p style={{ margin: 0 }}>{spokenFeedback}</p>
+        </div>
+      )}
+
       {/* Main Dual-Column Exercise Area */}
       <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
         {/* Left Column: 3D Physiotherapy Avatar Guidance */}
@@ -400,6 +452,13 @@ export function ExerciseSessionView() {
                 display: cameraActive && !isSimulated ? 'block' : 'none',
               }}
             />
+            <canvas
+              ref={landmarkCanvasRef}
+              width={640}
+              height={480}
+              aria-label="Detected body landmarks"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            />
 
             {/* Simulated / Fallback Kinematic Overlay when camera is simulated */}
             {(!cameraActive || isSimulated) && (
@@ -493,6 +552,13 @@ export function ExerciseSessionView() {
             <span>Target Depth: {selectedExerciseId === 'bodyweight_squat' ? '≤ 100° Knee' : '≥ 120° Shoulder'}</span>
             <span>Reliability Threshold: 65% Visibility</span>
           </div>
+          {movementResult && (
+            <div role="status" style={{ marginTop: '0.65rem', padding: '0.65rem 0.8rem', borderRadius: '6px', background: movementResult.movement_checks.length ? '#fffbeb' : '#f0fdf4', color: movementResult.movement_checks.length ? '#92400e' : '#166534', fontSize: '0.85rem' }}>
+              {movementResult.movement_checks.length
+                ? movementResult.movement_checks.map((check) => check.replace(/_/g, ' ')).join(' · ')
+                : 'No movement feedback flags.'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -554,6 +620,7 @@ export function ExerciseSessionView() {
         <MalayalamVoiceDialog
           sessionId={currentSession.id}
           onSymptomSubmitted={handleSymptomSubmitted}
+          onFeedbackReceived={setSpokenFeedback}
           onClose={() => setShowVoiceDialog(false)}
         />
       )}

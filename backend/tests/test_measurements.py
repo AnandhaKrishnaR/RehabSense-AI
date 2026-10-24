@@ -43,7 +43,9 @@ class MovementMeasurementEndpointTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['repetitions'], 3)
         self.assertTrue(response.data['measurement_reliable'])
+        self.assertEqual(response.data['session_id'], str(self.session.id))
         self.assertEqual(response.data['exercise'], 'bodyweight_squat')
+        self.assertIn('stored_at', response.data)
 
         # Check session updated completed_reps
         self.session.refresh_from_db()

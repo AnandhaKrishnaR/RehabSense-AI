@@ -75,11 +75,14 @@ class SessionListCreateView(APIView):
 
         exercise_filter = request.query_params.get('exercise')
         status_filter = request.query_params.get('status')
+        patient_filter = request.query_params.get('patient') or request.query_params.get('patient_identifier')
         if exercise_filter:
             sessions = sessions.filter(exercise_id=exercise_filter)
         if status_filter:
             sessions = sessions.filter(status=status_filter)
 
+        if patient_filter:
+            sessions = sessions.filter(patient_identifier=patient_filter)
         serializer = RehabilitationSessionSerializer(sessions, many=True)
         return Response(serializer.data)
 
@@ -95,7 +98,11 @@ class SessionListCreateView(APIView):
             therapy_plan = get_object_or_404(TherapyPlan, id=data['therapy_plan_id'])
 
         user = request.user if (request.user and request.user.is_authenticated) else None
-        patient_identifier = get_request_patient_identifier(request)
+        patient_identifier = (
+            get_request_patient_identifier(request)
+            if user
+            else data.get('patient_identifier', get_request_patient_identifier(request))
+        )
 
         session = RehabilitationSession.objects.create(
             user=user,

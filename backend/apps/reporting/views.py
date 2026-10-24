@@ -40,7 +40,7 @@ class ClinicianReviewListView(APIView):
             )
 
         status_filter = request.query_params.get('status')
-        queryset = ClinicianReviewFlag.objects.select_related('session').all()
+        queryset = ClinicianReviewFlag.objects.select_related('session').prefetch_related('session__symptoms', 'session__measurements').all()
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         serializer = ClinicianReviewFlagSerializer(queryset, many=True)
@@ -125,26 +125,35 @@ class ProgressSummaryView(APIView):
             measurements = MovementMeasurement.objects.filter(
                 session__in=ex_sessions,
                 measurement_reliable=True
-            )
+            ).values_list('joint_angles', flat=True)
             primary_angles = []
-            for m in measurements:
-                angles = m.joint_angles or {}
+            for joint_angles in measurements:
+                if not isinstance(joint_angles, dict):
+                    continue
                 if ex_id == 'bodyweight_squat':
-                    # knee flexion
-                    val = angles.get('left_knee') or angles.get('right_knee')
+                    val = joint_angles.get('left_knee')
+                    if val is None:
+                        val = joint_angles.get('right_knee')
                 else:
-                    # shoulder flexion
-                    val = angles.get('left_shoulder') or angles.get('right_shoulder')
+                    val = joint_angles.get('left_shoulder')
+                    if val is None:
+                        val = joint_angles.get('right_shoulder')
                 if val is not None and isinstance(val, (int, float)):
-                    primary_angles.append(val)
+                    primary_angles.append(float(val))
 
             avg_angle = round(sum(primary_angles) / len(primary_angles), 1) if primary_angles else None
 
-            completed_exercises[ex_id] = {
+            stat_dict = {
                 "sessions_count": count,
                 "total_reps": total_reps,
                 "average_primary_angle": avg_angle,
             }
+            if ex_id == 'bodyweight_squat':
+                stat_dict["average_knee_flexion"] = avg_angle
+            elif ex_id == 'shoulder_flexion':
+                stat_dict["average_shoulder_elevation"] = avg_angle
+
+            completed_exercises[ex_id] = stat_dict
 
         # Pain & difficulty trend from confirmed symptom reports only
         symptoms = SymptomReport.objects.filter(

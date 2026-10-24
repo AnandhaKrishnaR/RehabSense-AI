@@ -31,6 +31,7 @@ def evaluate_session_safety(
     """
     reasons = []
     feedback = []
+    feedback_ml = []
     urgent_alert = False
 
     transcript_lower = (transcript or "").lower()
@@ -40,7 +41,8 @@ def evaluate_session_safety(
         if kw in transcript_lower:
             urgent_alert = True
             reasons.append("urgent_symptom_detected")
-            feedback.append("URGENT: Serious symptom reported. Stop exercising immediately and seek medical attention.")
+            feedback.append("URGENT: Serious symptom detected. Stop immediately and seek immediate medical assistance.")
+            feedback_ml.append("ശ്രദ്ധിക്കുക: അടിയന്തിര ലക്ഷണങ്ങൾ കാണുന്നു. ഉടൻ തന്നെ വ്യായാമം നിർത്തി വൈദ്യസഹായം തേടുക.")
             break
 
     # Rule S6: Conflicting or Contradictory Data Check
@@ -54,9 +56,10 @@ def evaluate_session_safety(
     # Rule S1: Severe Pain (VAS >= 7)
     if pain_score is not None and pain_score >= 7:
         reasons.append("high_pain_score")
-        feedback.append("High pain level reported. Please stop the exercise, rest, and notify your physiotherapist.")
+        feedback.append("High pain reported. Please stop the exercise, rest, and notify your physiotherapist.")
+        feedback_ml.append("കടുത്ത വേദന അനുഭവപ്പെടുന്നു. ദയവായി വ്യായാമം നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.")
 
-    # Rule S2: Worsening Pain Progression
+    # Rule S2: Worsening Pain Progression (Flag or >= 2 points above prior session baseline)
     pain_worsening_detected = worsening_pain
     if not pain_worsening_detected and not conflicting:
         for kw in PAIN_INCREASE_KEYWORDS:
@@ -64,27 +67,33 @@ def evaluate_session_safety(
                 pain_worsening_detected = True
                 break
 
-    # Check baseline progression against prior confirmed reports in session
     if not pain_worsening_detected and pain_score is not None and session:
-        try:
-            prior_symptoms = session.symptoms.filter(
-                patient_confirmed=True
-            ).exclude(pain_score__isnull=True).order_by('reported_at')
-            if prior_symptoms.exists():
-                baseline_pain = prior_symptoms.first().pain_score
-                if baseline_pain is not None and pain_score >= baseline_pain + 2:
-                    pain_worsening_detected = True
-        except Exception:
-            pass
+        prior_symptom = session.symptoms.filter(
+            patient_confirmed=True,
+            pain_score__isnull=False,
+        ).order_by('reported_at').first()
+        if prior_symptom and pain_score >= prior_symptom.pain_score + 2:
+            pain_worsening_detected = True
+        elif getattr(session, 'patient_identifier', None):
+            from apps.rehabilitation.models import SymptomReport
+            previous_session_symptom = SymptomReport.objects.filter(
+                session__patient_identifier=session.patient_identifier,
+                patient_confirmed=True,
+                pain_score__isnull=False,
+            ).exclude(session_id=session.id).order_by('-reported_at').first()
+            if previous_session_symptom and pain_score >= previous_session_symptom.pain_score + 2:
+                pain_worsening_detected = True
 
     if pain_worsening_detected and not conflicting:
         reasons.append("patient_reported_increasing_pain")
-        feedback.append("Your pain appears to be increasing. Pause the exercise and follow your clinician's guidance.")
+        feedback.append("Your pain is increasing. Pause the exercise and consult your clinician before resuming.")
+        feedback_ml.append("വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക.")
 
     # Rule S4: Persistent Unreliable Tracking Streak
     if unreliable_measurement_streak >= 5:
         reasons.append("unreliable_camera_streak")
         feedback.append("Webcam tracking is currently unreliable. Please step back into full camera view and ensure proper room lighting.")
+        feedback_ml.append("ക്യാമറയിൽ ശരീരം വ്യക്തമല്ല. വെളിച്ചം ഉറപ്പാക്കി ക്യാമറയ്ക്ക് നേരെ നിൽക്കുക.")
 
     # Rule S5: Missing Critical Measurements
     if missing_critical_measurements:
@@ -100,6 +109,7 @@ def evaluate_session_safety(
     if not patient_confirmed and not urgent_alert:
         reasons.append("unconfirmed_symptom_draft")
         feedback.append("Extracted symptom report is awaiting patient confirmation before clinical trust.")
+        feedback_ml.append("രേഖപ്പെടുത്തിയ ലക്ഷണങ്ങൾ സ്ഥിരീകരിക്കാൻ കാത്തിരിക്കുന്നു.")
 
     # Determine if clinician review is required
     # Any urgent symptom, severe pain, worsening pain, or persistent camera issues trigger review
@@ -111,7 +121,7 @@ def evaluate_session_safety(
             "conflicting_data",
         )
     ]
-    review_required = bool(review_triggering_reasons)
+    review_required = bool(review_triggering_reasons) and (patient_confirmed or urgent_alert)
 
     # Persist review flag if review is required and symptoms were confirmed (or urgent)
     if review_required and (patient_confirmed or urgent_alert) and session:
@@ -119,30 +129,36 @@ def evaluate_session_safety(
             session.review_required = True
             session.save(update_fields=['review_required'])
 
-        # Flag Deduplication: Check if identical pending flag already exists on session
+        target_severity = 'urgent' if urgent_alert else ('warning' if pain_score and pain_score >= 7 else 'routine')
         existing_flag = ClinicianReviewFlag.objects.filter(
             session=session,
             status='pending',
-            flag_reasons=reasons
-        ).exists()
-
-        if not existing_flag:
-            severity = 'urgent' if urgent_alert else ('warning' if (pain_score and pain_score >= 7) or pain_worsening_detected else 'routine')
+        ).first()
+        if existing_flag:
+            existing_flag.flag_reasons = list(dict.fromkeys(existing_flag.flag_reasons + reasons))
+            existing_flag.safety_feedback = list(dict.fromkeys(existing_flag.safety_feedback + feedback))
+            if target_severity == 'urgent' or existing_flag.severity not in ('urgent', 'warning'):
+                existing_flag.severity = target_severity
+            existing_flag.save(update_fields=['flag_reasons', 'safety_feedback', 'severity'])
+        else:
             ClinicianReviewFlag.objects.create(
                 session=session,
                 status='pending',
-                severity=severity,
+                severity=target_severity,
                 flag_reasons=reasons,
                 safety_feedback=feedback,
             )
 
     if not feedback:
         feedback.append("Exercise movement within safe demonstration parameters.")
+        feedback_ml.append("വ്യായാമ ചലനങ്ങൾ സുരക്ഷിതമായ പരിധിയിലാണ്.")
 
     return {
         "review_required": review_required,
         "reasons": reasons,
         "measurement_reliable": unreliable_measurement_streak < 5,
         "feedback": feedback,
+        "feedback_ml": feedback_ml,
         "urgent_alert": urgent_alert,
+        "unconfirmed_draft": not patient_confirmed and not urgent_alert,
     }

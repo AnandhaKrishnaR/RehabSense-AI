@@ -30,6 +30,25 @@ describe('Movement Geometry and Calculations', () => {
     expect(check.reliable).toBe(false);
     expect(check.missingIndices).toContain(1);
   });
+
+  it('rejects missing, non-finite, and out-of-range visibility values', () => {
+    for (const visibility of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -0.1, 1.1]) {
+      const check = checkVisibility([{ x: 0, y: 0, visibility }], [0], 0.65);
+
+      expect(check.reliable).toBe(false);
+      expect(check.minFoundVisibility).toBe(0);
+      expect(check.missingIndices).toContain(0);
+    }
+  });
+
+  it('rejects degenerate geometry and non-finite coordinates', () => {
+    const a: Landmark = { x: 0, y: 0 };
+    const b: Landmark = { x: 0, y: 0 };
+    const c: Landmark = { x: 0, y: 0 };
+    expect(Number.isNaN(calculateAngle(a, b, c))).toBe(true);
+
+    expect(checkVisibility(undefined, [0, 1], 0.65).reliable).toBe(false);
+  });
 });
 
 describe('SquatTracker State Machine', () => {
@@ -109,6 +128,33 @@ describe('SquatTracker State Machine', () => {
     expect(res.movement_checks).toContain('low_visibility_legs');
     expect(tracker.getRepCount()).toBe(0);
   });
+
+  it('handles missing landmark arrays without changing the repetition count', () => {
+    const tracker = new SquatTracker();
+    tracker.setRepCount(2);
+
+    for (const landmarks of [undefined, null]) {
+      const res = tracker.processFrame(landmarks);
+      expect(res.measurement_reliable).toBe(false);
+      expect(res.repetitions).toBe(2);
+      expect(tracker.getRepCount()).toBe(2);
+    }
+  });
+
+  it('preserves the repetition count when knee angles are invalid', () => {
+    const tracker = new SquatTracker();
+    tracker.setRepCount(2);
+    const landmarks = makeSquatLandmarks(95);
+    landmarks[23] = { ...landmarks[25] };
+    landmarks[27] = { ...landmarks[25] };
+
+    const res = tracker.processFrame(landmarks);
+
+    expect(res.measurement_reliable).toBe(false);
+    expect(res.movement_checks).toContain('invalid_landmarks');
+    expect(res.repetitions).toBe(2);
+    expect(tracker.getRepCount()).toBe(2);
+  });
 });
 
 describe('ShoulderFlexionTracker State Machine', () => {
@@ -159,62 +205,89 @@ describe('ShoulderFlexionTracker State Machine', () => {
     expect(tracker.getRepCount()).toBe(1);
   });
 
-  describe('Malayalam Movement Voice Coach', () => {
-    it('announces exercise setup instructions', () => {
-      expect(MOVEMENT_COACH_MESSAGES.bodyweight_squat.start).toContain('കാലുകൾ');
-      expect(MOVEMENT_COACH_MESSAGES.shoulder_flexion.start).toContain('കൈ');
-    });
+  it('handles missing landmark arrays without changing the repetition count', () => {
+    const tracker = new ShoulderFlexionTracker();
+    tracker.setRepCount(2);
 
-    it('uses English cues when English speech is selected', () => {
-      expect(getMovementCoachStartMessage('bodyweight_squat', 'en-IN')).toContain('Let us begin');
-      expect(getMovementCoachMessage(
-        'shoulder_flexion',
-        'eccentric',
-        0,
-        'idle',
-        0,
-        true,
-        [],
-        {},
-        'en-IN',
-      )).toContain('Raise your arm slowly');
-    });
+    for (const landmarks of [undefined, null]) {
+      const res = tracker.processFrame(landmarks);
+      expect(res.measurement_reliable).toBe(false);
+      expect(res.repetitions).toBe(2);
+      expect(tracker.getRepCount()).toBe(2);
+    }
+  });
 
-    it('announces phase transitions and completed repetitions', () => {
-      expect(getMovementCoachMessage(
-        'bodyweight_squat',
-        'eccentric',
-        0,
-        'idle',
-        0,
-        true,
-      )).toContain('താഴേക്ക്');
+  it('preserves the repetition count when shoulder angles are invalid', () => {
+    const tracker = new ShoulderFlexionTracker();
+    tracker.setRepCount(2);
+    const landmarks = makeShoulderLandmarks(125);
+    landmarks[23] = { ...landmarks[11] };
+    landmarks[13] = { ...landmarks[11] };
 
-      expect(getMovementCoachMessage(
-        'shoulder_flexion',
-        'completed',
-        5,
-        'concentric',
-        4,
-        true,
-      )).toContain('5');
-    });
+    const res = tracker.processFrame(landmarks);
 
-    it('announces unreliable tracking only once until tracking recovers', () => {
-      expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'idle', 0, false)).toContain('ചലനം');
-      expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'unreliable', 0, false)).toBeNull();
-    });
+    expect(res.measurement_reliable).toBe(false);
+    expect(res.movement_checks).toContain('invalid_landmarks');
+    expect(res.repetitions).toBe(2);
+    expect(tracker.getRepCount()).toBe(2);
+  });
+});
 
-    it('coaches the patient to slow down when movement checks fail', () => {
-      expect(getMovementCoachMessage(
-        'bodyweight_squat',
-        'eccentric',
-        0,
-        'idle',
-        0,
-        true,
-        ['asymmetrical_knee_flexion'],
-      )).toContain('പതുക്കെ');
-    });
+describe('Malayalam Movement Voice Coach', () => {
+  it('announces exercise setup instructions', () => {
+    expect(MOVEMENT_COACH_MESSAGES.bodyweight_squat.start).toContain('കാലുകൾ');
+    expect(MOVEMENT_COACH_MESSAGES.shoulder_flexion.start).toContain('കൈ');
+  });
+
+  it('uses English cues when English speech is selected', () => {
+    expect(getMovementCoachStartMessage('bodyweight_squat', 'en-IN')).toContain('Let us begin');
+    expect(getMovementCoachMessage(
+      'shoulder_flexion',
+      'eccentric',
+      0,
+      'idle',
+      0,
+      true,
+      [],
+      {},
+      'en-IN',
+    )).toContain('Raise your arm slowly');
+  });
+
+  it('announces phase transitions and completed repetitions', () => {
+    expect(getMovementCoachMessage(
+      'bodyweight_squat',
+      'eccentric',
+      0,
+      'idle',
+      0,
+      true,
+    )).toContain('താഴേക്ക്');
+
+    expect(getMovementCoachMessage(
+      'shoulder_flexion',
+      'completed',
+      5,
+      'concentric',
+      4,
+      true,
+    )).toContain('5');
+  });
+
+  it('announces unreliable tracking only once until tracking recovers', () => {
+    expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'idle', 0, false)).toContain('ചലനം');
+    expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'unreliable', 0, false)).toBeNull();
+  });
+
+  it('coaches the patient to slow down when movement checks fail', () => {
+    expect(getMovementCoachMessage(
+      'bodyweight_squat',
+      'eccentric',
+      0,
+      'idle',
+      0,
+      true,
+      ['asymmetrical_knee_flexion'],
+    )).toContain('പതുക്കെ');
   });
 });

@@ -37,10 +37,11 @@ type SpeechRecognitionWindow = Window & {
 export interface MalayalamVoiceDialogProps {
   sessionId: string;
   onSymptomSubmitted: (symptom: SymptomReportPayload) => void;
+  onFeedbackReceived?: (feedback: string) => void;
   onClose: () => void;
 }
 
-export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }: MalayalamVoiceDialogProps) {
+export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedbackReceived, onClose }: MalayalamVoiceDialogProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -194,6 +195,7 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onClose }:
         ? 'വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക, ഫിസിയോതെറാപ്പിസ്റ്റിനെ അറിയിക്കുക.'
         : 'വിവരങ്ങൾ രേഖപ്പെടുത്തി. സാവധാനം വ്യായാമം തുടരുക.';
       setVoiceFeedbackText(replyText);
+      onFeedbackReceived?.(replyText);
       speakMalayalam(replyText);
 
       onSymptomSubmitted(payload);

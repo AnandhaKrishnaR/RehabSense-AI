@@ -5,7 +5,16 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
-from apps.voice.adapters import GTTSVoiceProvider, MalayalamSymptomExtractor
+from apps.voice.adapters import (
+    AI4BharatSTTProvider,
+    GTTSVoiceProvider,
+    MalayalamSymptomExtractor,
+    MockSTTProvider,
+    SarvamTTSProvider,
+    WhisperSTTProvider,
+    extract_symptoms_from_text,
+    get_voice_adapter,
+)
 
 @override_settings(MALAYALAM_VOICE_PROVIDER='mock')
 class VoiceEndpointTests(TestCase):
@@ -26,6 +35,20 @@ class VoiceEndpointTests(TestCase):
         self.assertTrue(response.data.get('is_mock'))
         self.assertIn('text', response.data)
         self.assertIn('extracted_symptoms', response.data)
+        symptoms = response.data['extracted_symptoms']
+        self.assertTrue(symptoms['pain_detected'])
+        self.assertIsNone(symptoms['suggested_pain_score'])
+        self.assertIn('pain_intensity', symptoms['clarification_needed'])
+
+    def test_transcribe_custom_text_extracts_symptoms(self):
+        url = reverse('voice:voice-transcribe')
+        # Test mild knee symptom
+        response = self.client.post(url, data={'text': 'കാൽമുട്ടിൽ ചെറിയ വേദനയുണ്ട്', 'language': 'ml'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        extracted = response.data['extracted_symptoms']
+        self.assertTrue(extracted['pain_detected'])
+        self.assertLessEqual(extracted['suggested_pain_score'], 4)
+        self.assertEqual(extracted['body_area'], 'knee')
 
     def test_transcribe_with_text_fallback(self):
         url = reverse('voice:voice-transcribe')
@@ -210,3 +233,32 @@ class VoiceEvaluationAPITests(TestCase):
         response = self.client.post(url, data=payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"], "validation_error")
+
+
+class VoiceAdapterCompatibilityTests(TestCase):
+    def test_symptom_extraction_wrapper_uses_conservative_extractor(self):
+        result = extract_symptoms_from_text('തോളിന് കടുത്ത വേദനയുണ്ട്', language='ml')
+
+        self.assertTrue(result['pain_detected'])
+        self.assertEqual(result['suggested_pain_score'], 8)
+        self.assertEqual(result['body_area'], 'shoulder')
+        self.assertFalse(result['patient_confirmed'])
+
+    def test_factory_preserves_stt_choices_and_sarvam_tts(self):
+        expected_stt_providers = (
+            ('mock', MockSTTProvider),
+            ('ai4bharat', AI4BharatSTTProvider),
+            ('whisper', WhisperSTTProvider),
+        )
+
+        for provider_name, expected_stt_type in expected_stt_providers:
+            with self.subTest(provider=provider_name):
+                adapter = get_voice_adapter(provider_name, 'sarvam')
+
+                self.assertIsInstance(adapter.stt, expected_stt_type)
+                self.assertIsInstance(adapter.tts, SarvamTTSProvider)
+
+    def test_speak_endpoint_without_text_returns_400(self):
+        url = reverse('voice:voice-speak')
+        response = self.client.post(url, data={}, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

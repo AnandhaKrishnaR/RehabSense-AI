@@ -35,7 +35,7 @@ class SafetyEvaluateView(APIView):
         joint_angles = request.data.get('joint_angles')
 
         transcript_parts = [str(s) for s in reported_symptoms]
-        if 'transcript' in request.data:
+        if request.data.get('transcript'):
             transcript_parts.append(str(request.data['transcript']))
         transcript = " ".join(transcript_parts)
 
