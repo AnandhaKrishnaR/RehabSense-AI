@@ -40,12 +40,18 @@ export class SquatTracker {
     this.repCount = reps;
   }
 
+  public discardIncompleteMovement(): void {
+    this.currentPhase = 'idle';
+    this.reachedInflection = false;
+  }
+
   public processFrame(landmarks: Landmark[] | null | undefined): MovementResult {
     const timestamp = new Date().toISOString();
     const safeLandmarks = Array.isArray(landmarks) ? landmarks : [];
     const visibilityCheck = checkVisibility(landmarks, SQUAT_REQUIRED_LANDMARKS, this.config.minVisibility);
 
     if (!Array.isArray(landmarks) || landmarks.length < 29 || !visibilityCheck.reliable) {
+      this.discardIncompleteMovement();
       return {
         exercise: 'bodyweight_squat',
         repetitions: this.repCount,
@@ -72,6 +78,7 @@ export class SquatTracker {
     const rightKneeAngle = calculateAngle(safeLandmarks[24], safeLandmarks[26], safeLandmarks[28]);
 
     if (!Number.isFinite(leftKneeAngle) || !Number.isFinite(rightKneeAngle)) {
+      this.discardIncompleteMovement();
       return {
         exercise: 'bodyweight_squat',
         repetitions: this.repCount,
@@ -103,7 +110,7 @@ export class SquatTracker {
     }
 
     if (avgKneeAngle >= this.config.standingAngle) {
-      if (this.currentPhase === 'concentric' && this.reachedInflection) {
+      if (this.reachedInflection) {
         this.repCount += 1;
         this.currentPhase = 'completed';
         this.reachedInflection = false;
