@@ -247,6 +247,13 @@ class ApiClient {
     return await response.json();
   }
 
+  public async analyzeSymptomText(text: string, language = 'ml'): Promise<VoiceTranscriptionResponse> {
+    return await this.request<VoiceTranscriptionResponse>('/voice/transcribe/', {
+      method: 'POST',
+      body: JSON.stringify({ text, language }),
+    });
+  }
+
   public async getVoiceTemplates(): Promise<VoiceTemplatesResponse | null> {
     try {
       return await this.request<VoiceTemplatesResponse>('/voice/templates/');

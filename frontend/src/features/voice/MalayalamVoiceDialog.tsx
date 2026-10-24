@@ -58,6 +58,33 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const recognizedTextRef = useRef('');
 
+  const applyExtractedSymptoms = (response: Awaited<ReturnType<typeof apiClient.transcribeAudio>>) => {
+    if (!response.extracted_symptoms) {
+      throw new Error('No symptom values were returned. Please try again.');
+    }
+    setPainScore(response.extracted_symptoms.suggested_pain_score);
+    setDifficulty(response.extracted_symptoms.suggested_difficulty || 'moderate');
+    setBodyArea(response.extracted_symptoms.body_area || '');
+    setHasExtracted(true);
+  };
+
+  const analyzeTranscript = async () => {
+    if (!transcript.trim()) return;
+    setIsProcessing(true);
+    setRecordingError(null);
+    setVoiceStatus(null);
+    try {
+      const response = await apiClient.analyzeSymptomText(transcript.trim(), 'ml');
+      setTranscript(response.text);
+      applyExtractedSymptoms(response);
+      setVoiceStatus('വിവരങ്ങൾ കണക്കാക്കി. സ്ഥിരീകരിച്ച് രേഖപ്പെടുത്തുക.');
+    } catch (err: any) {
+      setRecordingError(err.message || 'Symptom values could not be calculated. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   useEffect(() => {
     const handlePlaybackError = () => {
       setRecordingError('Speech playback failed. Check the configured TTS provider or matching browser voice and try again.');
@@ -101,7 +128,7 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
                 interimText += result[0].transcript;
               }
             }
-            recognizedTextRef.current = finalText;
+            recognizedTextRef.current = (finalText || interimText).trim();
             setTranscript(`${finalText}${interimText}`.trim());
           };
           recognition.onerror = () => {
@@ -123,14 +150,12 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const recognizedText = recognizedTextRef.current.trim();
         try {
-          const res = await apiClient.transcribeAudio(audioBlob, 'ml', recognizedText || undefined);
+          const res = recognizedText
+            ? await apiClient.analyzeSymptomText(recognizedText, 'ml')
+              .catch(() => apiClient.transcribeAudio(audioBlob, 'ml'))
+            : await apiClient.transcribeAudio(audioBlob, 'ml');
           setTranscript(res.text);
-          if (res.extracted_symptoms) {
-            setPainScore(res.extracted_symptoms.suggested_pain_score);
-            setDifficulty(res.extracted_symptoms.suggested_difficulty || 'moderate');
-            setBodyArea(res.extracted_symptoms.body_area || '');
-          }
-          setHasExtracted(true);
+          applyExtractedSymptoms(res);
           const spokenAcknowledgement = 'നിങ്ങളുടെ മറുപടി രേഖപ്പെടുത്തി. ദയവായി വിവരങ്ങൾ പരിശോധിക്കുക.';
           setVoiceStatus('ശബ്ദം കേൾക്കുന്നു...');
           speakMalayalam(spokenAcknowledgement);
@@ -317,10 +342,26 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
             <input
               type="text"
               value={transcript}
-              onChange={(e) => setTranscript(e.target.value)}
+              onChange={(e) => {
+                setTranscript(e.target.value);
+                setPainScore(null);
+                setDifficulty('moderate');
+                setBodyArea('');
+                setHasExtracted(false);
+                setVoiceStatus(null);
+              }}
               placeholder="e.g. കൈ ഉയർത്തുമ്പോൾ വേദന തോന്നുന്നു"
               style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '0.9rem' }}
             />
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={analyzeTranscript}
+              disabled={!transcript.trim() || isProcessing}
+              style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
+            >
+              {isProcessing ? 'Calculating...' : 'Calculate values'}
+            </button>
             <button
               type="button"
               className="btn btn-outline"
@@ -349,7 +390,9 @@ export function MalayalamVoiceDialog({ sessionId, onSymptomSubmitted, onFeedback
               </select>
               {painScore === null && (
                 <small style={{ color: 'var(--text-muted)' }}>
-                  Pain was detected, but its intensity was unclear. Set a score only after confirming it with the patient.
+                  {hasExtracted
+                    ? 'No numeric score was inferred. Confirm the patient’s 0–10 score before selecting a value.'
+                    : 'Record a phrase or calculate values from the transcript first.'}
                 </small>
               )}
             </div>
