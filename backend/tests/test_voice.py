@@ -128,6 +128,10 @@ class VoiceEndpointTests(TestCase):
         self.assertEqual(res3['suggested_difficulty'], 'moderate')
         self.assertEqual(res3['body_area'], '')
 
+        chest_pain = extractor.extract_symptoms('നെഞ്ചിൽ കടുത്ത വേദന 9/10 തോന്നുന്നു')
+        self.assertEqual(chest_pain['suggested_pain_score'], 9)
+        self.assertEqual(chest_pain['body_area'], 'chest')
+
     def test_symptom_extractor_handles_colloquial_pain_and_spoken_scores(self):
         extractor = MalayalamSymptomExtractor()
 
