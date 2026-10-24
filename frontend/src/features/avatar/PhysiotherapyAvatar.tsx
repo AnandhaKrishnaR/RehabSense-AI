@@ -466,17 +466,17 @@ export function PhysiotherapyAvatar({
           width: '100%',
           borderRadius: '10px',
           overflow: 'hidden',
-          background: '#24262a',
+          background: '#edf7fc',
           position: 'relative',
         }}
       >
         <Canvas camera={{ position: postureMode === 'side_lying' ? [0, 1.25, 3.2] : [0, 1.8, 3.5], fov: 38 }}>
           {/* Warm Studio Lighting for 3D Aesthetic */}
-          <color attach="background" args={['#24262a']} />
-          <ambientLight intensity={0.55} />
-          <directionalLight position={[3, 5, 4]} intensity={2.1} castShadow />
-          <directionalLight position={[-3, 2, 2]} intensity={0.9} color="#8fcaff" />
-          <pointLight position={[0, 2, -2]} intensity={0.5} color="#d8eaff" />
+          <color attach="background" args={['#edf7fc']} />
+          <ambientLight intensity={0.8} />
+          <directionalLight position={[3, 5, 4]} intensity={1.8} castShadow />
+          <directionalLight position={[-3, 2, 2]} intensity={0.55} color="#dcecf5" />
+          <pointLight position={[0, 2, -2]} intensity={0.25} color="#ffffff" />
           {modelStatus === 'found' ? (
             <AvatarLoadBoundary
               key={resolvedModelUrl}
@@ -538,7 +538,7 @@ export function PhysiotherapyAvatar({
             </>
           ) : (
             <>
-              <CheckCircle2 size={13} color="#0d9488" /> Glossy Blue Exercise Avatar
+              <CheckCircle2 size={13} color="#0d9488" /> Friendly 3D Exercise Guide
             </>
           )}
         </div>
