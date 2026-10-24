@@ -1,0 +1,221 @@
+{
+  "review_status": "draft_pending_fluent_speaker_and_clinician_review",
+  "terminology": [
+    {
+      "original": "bodyweight squat",
+      "pattern": "\\bbodyweight[\\s_-]?squats?\\b(?:\\s*വ്യായാമം)?",
+      "spoken_form": "സ്ക്വാറ്റ് വ്യായാമം",
+      "pronunciation_hint": null,
+      "safe_when": "Exercise name only; does not alter movement instructions."
+    },
+    {
+      "original": "shoulder flexion",
+      "pattern": "\\b(?:shoulder[\\s_-]?flexion|arm[\\s_-]?raise)\\b(?:\\s*വ്യായാമം)?",
+      "spoken_form": "കൈ ഉയർത്തുന്ന വ്യായാമം",
+      "pronunciation_hint": null,
+      "safe_when": "Exercise name only; does not imply a side or range."
+    },
+    {
+      "original": "reps / repetitions",
+      "pattern": "\\b(?:reps?|repetitions?)\\b",
+      "spoken_form": "ആവർത്തനങ്ങൾ",
+      "pronunciation_hint": null,
+      "safe_when": "Count unit only; numeric value is handled separately."
+    },
+    {
+      "original": "left arm / left hand",
+      "pattern": "\\bleft[\\s_-](?:arm|hand)\\b",
+      "spoken_form": "ഇടത് കൈ",
+      "pronunciation_hint": null,
+      "safe_when": "Explicit left-side wording only."
+    },
+    {
+      "original": "right arm / right hand",
+      "pattern": "\\bright[\\s_-](?:arm|hand)\\b",
+      "spoken_form": "വലത് കൈ",
+      "pronunciation_hint": null,
+      "safe_when": "Explicit right-side wording only."
+    },
+    {
+      "original": "left leg",
+      "pattern": "\\bleft[\\s_-]leg\\b",
+      "spoken_form": "ഇടത് കാൽ",
+      "pronunciation_hint": null,
+      "safe_when": "Explicit left-side wording only."
+    },
+    {
+      "original": "right leg",
+      "pattern": "\\bright[\\s_-]leg\\b",
+      "spoken_form": "വലത് കാൽ",
+      "pronunciation_hint": null,
+      "safe_when": "Explicit right-side wording only."
+    },
+    {
+      "original": "both arms / both hands",
+      "pattern": "\\bboth[\\s_-](?:arms|hands)\\b",
+      "spoken_form": "രണ്ട് കൈകളും",
+      "pronunciation_hint": null,
+      "safe_when": "Bilateral wording only."
+    },
+    {
+      "original": "pain score",
+      "pattern": "\\bpain[\\s_-]score\\b",
+      "spoken_form": "വേദനയുടെ അളവ്",
+      "pronunciation_hint": null,
+      "safe_when": "Label only; keeps the score value unchanged."
+    },
+    {
+      "original": "pain",
+      "pattern": "\\bpain\\b",
+      "spoken_form": "വേദന",
+      "pronunciation_hint": null,
+      "safe_when": "Generic symptom noun only; does not infer severity or body area."
+    },
+    {
+      "original": "stop the exercise",
+      "pattern": "\\bstop\\s+(?:the\\s+)?exercise\\b",
+      "spoken_form": "വ്യായാമം നിർത്തുക",
+      "pronunciation_hint": null,
+      "safe_when": "Direct stop instruction only."
+    },
+    {
+      "original": "raise your arm slowly",
+      "pattern": "\\braise\\s+(?:your\\s+)?arm\\s+slowly\\b",
+      "spoken_form": "കൈ പതുക്കെ ഉയർത്തുക",
+      "pronunciation_hint": null,
+      "safe_when": "Preserves the stated arm and slow-raise action."
+    },
+    {
+      "original": "lower your arm slowly",
+      "pattern": "\\blower\\s+(?:your\\s+)?arm\\s+slowly\\b",
+      "spoken_form": "കൈ പതുക്കെ താഴ്ത്തുക",
+      "pronunciation_hint": null,
+      "safe_when": "Preserves the stated arm and slow-lowering action."
+    },
+    {
+      "original": "keep your movement controlled",
+      "pattern": "\\bkeep (?:your )?movement controlled\\b",
+      "spoken_form": "ചലനം നിയന്ത്രിച്ച് ചെയ്യുക",
+      "pronunciation_hint": null,
+      "safe_when": "General tempo cue only; adds no new therapeutic target."
+    },
+    {
+      "original": "physiotherapist / therapist / physio",
+      "pattern": "\\b(?:physiotherapist|therapist|physio)\\b",
+      "spoken_form": "ഫിസിയോതെറാപ്പിസ്റ്റ്",
+      "pronunciation_hint": null,
+      "safe_when": "Clinician role only; does not change who should be contacted."
+    },
+    {
+      "original": "range of motion",
+      "pattern": "\\brange[\\s_-]of[\\s_-]motion\\b",
+      "spoken_form": "ചലന പരിധി",
+      "pronunciation_hint": null,
+      "safe_when": "Term only; does not set a new clinical range."
+    },
+    {
+      "original": "posture",
+      "pattern": "\\bposture\\b",
+      "spoken_form": "ശരീരനില",
+      "pronunciation_hint": null,
+      "safe_when": "General posture term only."
+    }
+  ],
+  "templates": {
+    "session_ready": {
+      "text": "വ്യായാമം തുടങ്ങാൻ തയ്യാറാകൂ. ക്യാമറയ്ക്ക് മുന്നിൽ നേരെ നിൽക്കുക.",
+      "context": "setup",
+      "description": "General exercise readiness"
+    },
+    "squat_start": {
+      "text": "സ്ക്വാറ്റ് വ്യായാമം തുടങ്ങാം. കാലുകൾ തോളിന്റെ വീതിയിൽ വയ്ക്കുക. പുറം നേരെ വച്ച് പതുക്കെ താഴേക്ക് ഇരിക്കുക. വേദന തോന്നിയാൽ ഉടൻ നിർത്തുക.",
+      "context": "exercise_start",
+      "description": "Bodyweight squat setup"
+    },
+    "shoulder_start": {
+      "text": "കൈ ഉയർത്തുന്ന വ്യായാമം തുടങ്ങാം. കൈ ശരീരത്തോട് ചേർത്ത് നേരെ നിൽക്കുക. കൈ പതുക്കെ മുന്നിലേക്ക് ഉയർത്തുക. വേദന തോന്നിയാൽ ഉടൻ നിർത്തുക.",
+      "context": "exercise_start",
+      "description": "Shoulder flexion setup"
+    },
+    "raise_arm_slowly": {
+      "text": "കൈ പതുക്കെ ഉയർത്തുക.",
+      "context": "movement",
+      "description": "Raise the arm slowly"
+    },
+    "lower_arm_slowly": {
+      "text": "കൈ പതുക്കെ താഴ്ത്തുക.",
+      "context": "movement",
+      "description": "Lower the arm slowly"
+    },
+    "controlled_movement": {
+      "text": "ചലനം നിയന്ത്രിച്ച് ചെയ്യുക.",
+      "context": "movement",
+      "description": "Keep movement controlled"
+    },
+    "squat_eccentric": {
+      "text": "പതുക്കെ താഴേക്ക് ഇരിക്കുക. പുറം നേരെ വയ്ക്കുക.",
+      "context": "movement_down",
+      "description": "Squat descent"
+    },
+    "squat_inflection": {
+      "text": "നന്നായി. ഇനി പതുക്കെ മുകളിലേക്ക് വരിക.",
+      "context": "movement_turn",
+      "description": "Squat turn"
+    },
+    "squat_concentric": {
+      "text": "പതുക്കെ മുകളിലേക്ക് ഉയരുക. പുറം നേരെ വയ്ക്കുക.",
+      "context": "movement_up",
+      "description": "Squat ascent"
+    },
+    "shoulder_eccentric": {
+      "text": "കൈ പതുക്കെ മുകളിലേക്ക് ഉയർത്തുക. വേദനയില്ലാത്ത പരിധിയിൽ മാത്രം ചെയ്യുക.",
+      "context": "movement_up",
+      "description": "Shoulder raise"
+    },
+    "shoulder_inflection": {
+      "text": "നന്നായി. ഇനി കൈ പതുക്കെ താഴേക്ക് കൊണ്ടുവരിക.",
+      "context": "movement_turn",
+      "description": "Shoulder movement turn"
+    },
+    "shoulder_concentric": {
+      "text": "കൈ പതുക്കെ താഴേക്ക് കൊണ്ടുവരിക. ശരീരത്തോട് ചേർക്കുക.",
+      "context": "movement_down",
+      "description": "Shoulder lowering"
+    },
+    "camera_unreliable": {
+      "text": "ചലനം വ്യക്തമായി കാണുന്നില്ല. ദയവായി നിങ്ങളുടെ സ്ഥാനം ശരിയാക്കുക.",
+      "context": "camera_warning",
+      "description": "Movement could not be detected clearly"
+    },
+    "movement_check_knees": {
+      "text": "കാൽമുട്ടുകൾ ഒരേ ദിശയിൽ വയ്ക്കുക. പതുക്കെ ചെയ്യുക.",
+      "context": "posture_correction",
+      "description": "Knee alignment cue"
+    },
+    "safety_pause_pain": {
+      "text": "വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.",
+      "context": "safety_pause",
+      "description": "Pause and follow physiotherapist guidance"
+    },
+    "safety_urgent_symptom": {
+      "text": "നെഞ്ചുവേദനയോ കടുത്ത അസ്വസ്ഥതയോ ഉണ്ടെങ്കിൽ വ്യായാമം ഉടൻ നിർത്തി സുരക്ഷിതമായി ഇരിക്കുക, വൈദ്യസഹായം തേടുക.",
+      "context": "emergency_alert",
+      "description": "Urgent symptom warning"
+    },
+    "inquire_difficulty": {
+      "text": "ഈ വ്യായാമം ചെയ്യാൻ എത്ര ബുദ്ധിമുട്ടുണ്ടായി?",
+      "context": "feedback_query",
+      "description": "Ask about exercise difficulty"
+    },
+    "inquire_pain": {
+      "text": "വേദനയെക്കുറിച്ച് പറയാനുണ്ടോ?",
+      "context": "feedback_query",
+      "description": "Ask whether the patient wants to report pain"
+    },
+    "rep_completed": {
+      "template": "{rep_word} {rep_unit} പൂർത്തിയായി. നന്നായി ചെയ്തു.",
+      "context": "repetition",
+      "description": "Repetition completion feedback"
+    }
+  }
+}

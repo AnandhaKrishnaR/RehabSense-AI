@@ -13,7 +13,15 @@ import {
   ResolveReviewPayload,
   VoiceTranscriptionResponse,
   VoiceSpeakResponse,
+  TTSCompatibilityResponse,
+  TTSProviderName,
+  TTSVoiceOptionsResponse,
+  VoiceLanguageCode,
+  OriginalTextLanguage,
+  VoiceTemplatesResponse,
   ProgressSummaryResponse,
+  VoiceEvaluationEntry,
+  VoiceEvaluationResponse,
 } from '../types/api';
 import { MovementResult, CanonicalExerciseId } from '../types/vision';
 
@@ -77,11 +85,17 @@ class ApiClient {
       const response = await fetch(url, { ...options, headers });
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}));
-        throw new Error(errorBody.detail || errorBody.error || `HTTP error ${response.status}`);
+        const error = new Error(errorBody.detail || errorBody.error || `HTTP error ${response.status}`) as Error & {
+          code?: string;
+          status?: number;
+        };
+        error.code = errorBody.error;
+        error.status = response.status;
+        throw error;
       }
       return await response.json();
     } catch (err: any) {
-      if (this.demoMode) {
+      if (this.demoMode && !endpoint.startsWith('/voice/')) {
         console.warn(`[RehabSense API] Network call to ${endpoint} failed, using demo fallback:`, err.message);
         return this.getMockResponse<T>(endpoint, options);
       }
@@ -214,50 +228,81 @@ class ApiClient {
     }
   }
 
-  public async transcribeAudio(audioBlob: Blob, language = 'ml'): Promise<VoiceTranscriptionResponse> {
+  public async transcribeAudio(audioBlob: Blob, language = 'ml', textFallback?: string): Promise<VoiceTranscriptionResponse> {
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.webm');
     formData.append('language', language);
+    if (textFallback) {
+      formData.append('text', textFallback);
+    }
 
+    const response = await fetch(`${this.baseUrl}/voice/transcribe/`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      throw new Error(errorBody.detail || errorBody.error || `Transcription failed (${response.status})`);
+    }
+    return await response.json();
+  }
+
+  public async getVoiceTemplates(): Promise<VoiceTemplatesResponse | null> {
     try {
-      const response = await fetch(`${this.baseUrl}/voice/transcribe/`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (!response.ok) throw new Error('Transcription failed');
-      return await response.json();
-    } catch (err) {
-      // Demo fallback Malayalam symptom transcription
-      return {
-        text: 'കൈ ഉയർത്തുമ്പോൾ ചെറിയ വേദന തോന്നുന്നു',
-        language: 'ml',
-        confidence: 0.95,
-        provider: 'mock (demo)',
-        extracted_symptoms: {
-          pain_detected: true,
-          suggested_pain_score: 4,
-          suggested_difficulty: 'moderate',
-          body_area: 'arm_shoulder',
-        },
-      };
+      return await this.request<VoiceTemplatesResponse>('/voice/templates/');
+    } catch {
+      return null;
     }
   }
 
-  public async speakText(text: string, language = 'ml'): Promise<VoiceSpeakResponse> {
-    try {
-      return await this.request<VoiceSpeakResponse>('/voice/speak/', {
-        method: 'POST',
-        body: JSON.stringify({ text, language }),
-      });
-    } catch (err) {
-      return {
-        audio_url: null,
-        audio_base64: null,
-        mime_type: 'audio/wav',
-        provider: 'mock (demo)',
-        fallback_text: text,
-      };
-    }
+  public async speakText(
+    text: string,
+    language: VoiceLanguageCode = 'ml-IN',
+    options: {
+      textLanguage?: OriginalTextLanguage;
+      speechLanguage?: VoiceLanguageCode;
+      provider?: TTSProviderName;
+      voice?: string;
+      segment?: boolean;
+    } = {},
+  ): Promise<VoiceSpeakResponse> {
+    return await this.request<VoiceSpeakResponse>('/voice/speak/', {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        text_language: options.textLanguage ?? 'auto',
+        speech_language: options.speechLanguage ?? language,
+        provider: options.provider,
+        voice: options.voice,
+        segment: options.segment ?? false,
+      }),
+    });
+  }
+
+  public async getTTSVoiceOptions(
+    provider: TTSProviderName,
+    speechLanguage: VoiceLanguageCode,
+  ): Promise<TTSVoiceOptionsResponse> {
+    return await this.request<TTSVoiceOptionsResponse>(
+      `/voice/options/?provider=${encodeURIComponent(provider)}&speech_language=${encodeURIComponent(speechLanguage)}`,
+    );
+  }
+
+  public async checkTTSCompatibility(
+    text: string,
+    textLanguage: OriginalTextLanguage,
+    speechLanguage: VoiceLanguageCode,
+    provider: TTSProviderName,
+  ): Promise<TTSCompatibilityResponse> {
+    return await this.request<TTSCompatibilityResponse>('/voice/compatibility/', {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        text_language: textLanguage,
+        speech_language: speechLanguage,
+        provider,
+      }),
+    });
   }
 
   public async getProgress(): Promise<ProgressSummaryResponse> {
@@ -309,6 +354,52 @@ class ApiClient {
         },
       ];
     }
+  }
+
+  public async getVoiceEvaluationData(): Promise<VoiceEvaluationResponse> {
+    try {
+      return await this.request<VoiceEvaluationResponse>('/voice/evaluation/');
+    } catch {
+      return {
+        presets: {
+          'ml-IN': [
+            'കൈകൾ പതുക്കെ ഉയർത്തുക.',
+            'വേദന അനുഭവപ്പെട്ടാൽ വ്യായാമം നിർത്തുക.',
+            'നിങ്ങളുടെ തോളുകൾ പതുക്കെ മുന്നോട്ട് ചലിപ്പിക്കുക.',
+            'ഈ വ്യായാമം എട്ട് തവണ ആവർത്തിക്കുക.',
+            'ശരീരത്തിന് അസ്വസ്ഥത അനുഭവപ്പെടുകയാണെങ്കിൽ വിശ്രമിക്കുക.',
+            'നിങ്ങളുടെ ഡോക്ടർ നിർദ്ദേശിച്ച വ്യായാമങ്ങൾ മാത്രം ചെയ്യുക.',
+            'കാൽമുട്ടുകളിൽ അമിതമായ സമ്മർദ്ദം നൽകാതിരിക്കുക.',
+            'വ്യായാമം ചെയ്യുമ്പോൾ ശ്വാസം സാധാരണ നിലയിൽ തുടരുക.',
+          ],
+          'en-IN': [
+            'Raise your arms slowly.',
+            'Stop exercising if you experience pain.',
+            'Move your shoulders gently forward.',
+            'Repeat this exercise eight times.',
+            'Rest if you feel uncomfortable.',
+            'Only perform exercises prescribed by your clinician.',
+            'Avoid putting excessive pressure on your knees.',
+            'Continue breathing normally during the exercise.',
+          ],
+        },
+        rubric: [
+          { field: 'pronunciation_score', label: 'Pronunciation', min: 1, max: 5 },
+          { field: 'naturalness_score', label: 'Naturalness', min: 1, max: 5 },
+          { field: 'clarity_score', label: 'Clarity', min: 1, max: 5 },
+          { field: 'medical_terms_score', label: 'Medical Terminology', min: 1, max: 5 },
+          { field: 'overall_score', label: 'Overall Quality', min: 1, max: 5 },
+        ],
+        evaluations: [],
+      };
+    }
+  }
+
+  public async submitVoiceEvaluation(entry: VoiceEvaluationEntry): Promise<VoiceEvaluationEntry> {
+    return await this.request<VoiceEvaluationEntry>('/voice/evaluation/', {
+      method: 'POST',
+      body: JSON.stringify(entry),
+    });
   }
 
   public async resolveReview(reviewId: string, payload: ResolveReviewPayload): Promise<any> {

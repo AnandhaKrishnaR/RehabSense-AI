@@ -2,10 +2,9 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from apps.rehabilitation.models import Exercise, TherapyPlan, TherapyPlanItem, RehabilitationSession, SymptomReport
 from apps.safety.models import ClinicianReviewFlag
-import datetime
 
 class Command(BaseCommand):
-    help = 'Seeds database with canonical exercises, sample therapy plan, and demo sessions'
+    help = 'Seeds database with canonical exercises, sample approved therapy plan, draft plan, and demo sessions'
 
     def handle(self, *args, **options):
         self.stdout.write("Seeding canonical exercises...")
@@ -48,17 +47,28 @@ class Command(BaseCommand):
             }
         )
 
-        self.stdout.write(self.style.SUCCESS(f"Exercises ready: {squat.id}, {shoulder.id}"))
+        self.stdout.write(self.style.SUCCESS(f"Canonical exercises ready: {squat.id}, {shoulder.id}"))
 
-        # 3. Create Sample Therapy Plan
+        # 3. Create Approved Therapy Plan
         plan, _ = TherapyPlan.objects.get_or_create(
             patient_identifier='Patient #1042',
             clinician_name='Dr. Anjali Menon (PT)',
             defaults={
                 'diagnosis_notes': 'Knee rehabilitation & upper-body mobility plan (Post-mild strain recovery)',
+                'instructions': 'Perform 2 sets per exercise daily. Cease movement if pain exceeds 5/10.',
+                'approval_status': 'approved',
+                'is_approved': True,
+                'approved_at': timezone.now(),
                 'is_active': True,
             }
         )
+
+        # Ensure approved fields are set even if record previously existed
+        if not plan.is_approved:
+            plan.approval_status = 'approved'
+            plan.is_approved = True
+            plan.approved_at = timezone.now()
+            plan.save(update_fields=['approval_status', 'is_approved', 'approved_at'])
 
         TherapyPlanItem.objects.get_or_create(
             therapy_plan=plan,
@@ -72,7 +82,20 @@ class Command(BaseCommand):
             defaults={'target_sets': 2, 'target_reps': 8, 'notes': 'Stop if shoulder impingement occurs'}
         )
 
-        # 4. Seed a flagged demo session for clinician review demonstration
+        # 4. Create Draft Unapproved Therapy Plan (to test approval filtering)
+        draft_plan, _ = TherapyPlan.objects.get_or_create(
+            patient_identifier='Patient #2001',
+            clinician_name='Dr. Sarah Clinician',
+            defaults={
+                'diagnosis_notes': 'Draft preliminary routine awaiting clinician sign-off.',
+                'instructions': 'Draft instructions pending clinical review.',
+                'approval_status': 'draft',
+                'is_approved': False,
+                'is_active': True,
+            }
+        )
+
+        # 5. Seed a flagged demo session for clinician review demonstration
         sess, created = RehabilitationSession.objects.get_or_create(
             patient_identifier='Patient #1042',
             exercise=shoulder,
@@ -81,6 +104,7 @@ class Command(BaseCommand):
                 'therapy_plan': plan,
                 'target_reps': 8,
                 'completed_reps': 5,
+                'notes': 'Patient felt shoulder stiffness halfway through session.',
                 'review_required': True,
                 'summary_metrics': {'avg_shoulder_angle': 105.0, 'completion_pct': 62.5},
             }
@@ -95,6 +119,7 @@ class Command(BaseCommand):
                 pain_score=6,
                 difficulty="hard",
                 body_area="shoulder",
+                extraction_status="confirmed",
                 patient_confirmed=True,
                 extraction_metadata={"pain_keyword": "വേദന", "body_area_keyword": "തോൾ"}
             )

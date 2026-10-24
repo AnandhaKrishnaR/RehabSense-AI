@@ -122,11 +122,67 @@ export interface VoiceTranscriptionResponse {
 }
 
 export interface VoiceSpeakResponse {
-  audio_url: string | null;
+  audio_url?: string | null;
+  audio_base64?: string | null;
+  mime_type?: string;
+  provider: string;
+  original_text?: string;
+  text_sent?: string;
+  text_language?: OriginalTextLanguage;
+  speech_language?: VoiceLanguageCode;
+  detected_text_language?: VoiceLanguageCode | 'mixed' | 'unknown';
+  compatible?: boolean;
+  warning?: string;
+  fallback_text?: string;
+  prepared_text?: string;
+  segments?: VoiceAudioSegment[];
+}
+
+export interface VoiceAudioSegment {
+  audio_url?: string | null;
   audio_base64: string | null;
   mime_type: string;
-  provider: string;
   fallback_text: string;
+  prepared_text?: string;
+}
+
+export interface VoiceTemplate {
+  text?: string;
+  template?: string;
+  context: string;
+  description: string;
+}
+
+export interface VoiceTemplatesResponse {
+  review_status: string;
+  templates: Record<string, VoiceTemplate>;
+}
+
+export type TTSProviderName = 'sarvam';
+export type VoiceLanguageCode = 'en-IN' | 'ml-IN';
+export type OriginalTextLanguage = 'auto' | VoiceLanguageCode;
+
+export interface TTSVoiceOption {
+  id: string;
+  label: string;
+  gender?: string;
+  language_code: VoiceLanguageCode;
+}
+
+export interface TTSVoiceOptionsResponse {
+  provider: TTSProviderName;
+  speech_language: VoiceLanguageCode;
+  model: string;
+  voices: TTSVoiceOption[];
+}
+
+export interface TTSCompatibilityResponse {
+  compatible: boolean;
+  detected_text_language: VoiceLanguageCode | 'mixed' | 'unknown';
+  text_language: OriginalTextLanguage;
+  speech_language: VoiceLanguageCode;
+  provider: TTSProviderName;
+  warning: string;
 }
 
 export interface ProgressSummaryResponse {
@@ -138,4 +194,34 @@ export interface ProgressSummaryResponse {
   }>;
   pain_trend: Array<{ date: string; pain_score: number | null }>;
   flagged_sessions_count: number;
+}
+
+
+export interface VoiceEvaluationEntry {
+  id?: string;
+  provider: TTSProviderName;
+  speech_language: VoiceLanguageCode;
+  voice: string;
+  sentence: string;
+  pronunciation_score: number;
+  naturalness_score: number;
+  clarity_score: number;
+  medical_terms_score: number;
+  overall_score: number;
+  notes?: string;
+  evaluated_at?: string;
+}
+
+export interface VoiceEvaluationResponse {
+  presets: {
+    'ml-IN': string[];
+    'en-IN': string[];
+  };
+  rubric: Array<{
+    field: string;
+    label: string;
+    min: number;
+    max: number;
+  }>;
+  evaluations: VoiceEvaluationEntry[];
 }
