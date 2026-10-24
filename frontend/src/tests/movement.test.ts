@@ -34,7 +34,7 @@ describe('Movement Geometry and Calculations', () => {
     ];
     const check = checkVisibility(landmarks, [0, 1], 0.65);
     expect(check.reliable).toBe(false);
-    expect(check.missingIndices).toContain(1);
+    expect(check.lowVisibilityIndices).toContain(1);
   });
 
   it('rejects missing, non-finite, and out-of-range visibility values', () => {
@@ -43,7 +43,7 @@ describe('Movement Geometry and Calculations', () => {
 
       expect(check.reliable).toBe(false);
       expect(check.minFoundVisibility).toBe(0);
-      expect(check.missingIndices).toContain(0);
+      expect(check.invalidVisibilityIndices).toContain(0);
     }
   });
 
@@ -53,7 +53,13 @@ describe('Movement Geometry and Calculations', () => {
     const c: Landmark = { x: 0, y: 0 };
     expect(Number.isNaN(calculateAngle(a, b, c))).toBe(true);
 
-    expect(checkVisibility(undefined, [0, 1], 0.65).reliable).toBe(false);
+    const missing = checkVisibility(undefined, [0, 1], 0.65);
+    expect(missing.reliable).toBe(false);
+    expect(missing.missingIndices).toEqual([0, 1]);
+
+    const invalidCoordinates = checkVisibility([{ x: Number.NaN, y: 0, visibility: 0.9 }], [0], 0.65);
+    expect(invalidCoordinates.reliable).toBe(false);
+    expect(invalidCoordinates.invalidCoordinateIndices).toEqual([0]);
   });
 
   it('processes only newer video frames and selects demo data only when explicitly enabled', () => {
@@ -147,6 +153,56 @@ describe('SquatTracker State Machine', () => {
 
     expect(tracker.getRepCount()).toBe(0);
     expect(res.current_phase).toBe('idle');
+    expect(res.movement_checks).toContain('insufficient_squat_depth');
+  });
+
+  it('reports insufficient depth only when a shallow descent returns to standing', () => {
+    const tracker = new SquatTracker({ inflectionAngle: 100.0, standingAngle: 160.0 });
+
+    expect(tracker.processFrame(makeSquatLandmarks(170)).movement_checks).not.toContain('insufficient_squat_depth');
+    const descending = tracker.processFrame(makeSquatLandmarks(120));
+    expect(descending.current_phase).toBe('eccentric');
+    expect(descending.movement_checks).not.toContain('insufficient_squat_depth');
+
+    const returned = tracker.processFrame(makeSquatLandmarks(165));
+    expect(returned.current_phase).toBe('idle');
+    expect(returned.movement_checks).toContain('insufficient_squat_depth');
+    expect(returned.repetitions).toBe(0);
+  });
+
+  it('does not report insufficient depth after a full-depth squat', () => {
+    const tracker = new SquatTracker({ inflectionAngle: 100.0, standingAngle: 160.0 });
+
+    tracker.processFrame(makeSquatLandmarks(170));
+    tracker.processFrame(makeSquatLandmarks(95));
+    const returned = tracker.processFrame(makeSquatLandmarks(165));
+
+    expect(returned.repetitions).toBe(1);
+    expect(returned.movement_checks).not.toContain('insufficient_squat_depth');
+  });
+
+  it('does not report insufficient depth during static standing', () => {
+    const tracker = new SquatTracker();
+
+    for (let frame = 0; frame < 5; frame++) {
+      const result = tracker.processFrame(makeSquatLandmarks(170));
+      expect(result.movement_checks).not.toContain('insufficient_squat_depth');
+      expect(result.repetitions).toBe(0);
+    }
+  });
+
+  it('does not report insufficient depth when an attempt has unreliable input', () => {
+    const tracker = new SquatTracker({ inflectionAngle: 100.0, standingAngle: 160.0 });
+
+    tracker.processFrame(makeSquatLandmarks(170));
+    tracker.processFrame(makeSquatLandmarks(120));
+    const unreliable = tracker.processFrame(makeSquatLandmarks(140, 0.3));
+    expect(unreliable.measurement_reliable).toBe(false);
+    expect(unreliable.movement_checks).not.toContain('insufficient_squat_depth');
+
+    const returned = tracker.processFrame(makeSquatLandmarks(165));
+    expect(returned.repetitions).toBe(0);
+    expect(returned.movement_checks).not.toContain('insufficient_squat_depth');
   });
 
   it('counts a repetition when a valid frame returns directly from inflection to standing', () => {
@@ -208,6 +264,7 @@ describe('SquatTracker State Machine', () => {
 
     expect(res.measurement_reliable).toBe(false);
     expect(res.movement_checks).toContain('low_visibility_legs');
+    expect(res.current_phase).toBe('unreliable');
     expect(tracker.getRepCount()).toBe(0);
   });
 
@@ -218,7 +275,7 @@ describe('SquatTracker State Machine', () => {
 
     const missing = tracker.processFrame(null);
     expect(missing.measurement_reliable).toBe(false);
-    expect(missing.movement_checks).toContain('low_visibility_legs');
+    expect(missing.movement_checks).toContain('missing_landmarks');
     expect(missing.repetitions).toBe(0);
 
     const completed = tracker.processFrame(makeSquatLandmarks(170));
@@ -236,6 +293,59 @@ describe('SquatTracker State Machine', () => {
     expect(result.repetitions).toBe(0);
     expect(result.current_phase).toBe('idle');
   });
+
+  const squatReliabilityFailures: Array<{
+    name: string;
+    check: string;
+    invalidate: (landmarks: Landmark[]) => void;
+  }> = [
+    {
+      name: 'missing landmarks',
+      check: 'missing_landmarks',
+      invalidate: (landmarks) => { delete landmarks[23]; },
+    },
+    {
+      name: 'low visibility',
+      check: 'low_visibility_legs',
+      invalidate: (landmarks) => { landmarks[23].visibility = 0.3; },
+    },
+    {
+      name: 'invalid coordinates',
+      check: 'invalid_coordinates',
+      invalidate: (landmarks) => { landmarks[23].x = Number.NaN; },
+    },
+    {
+      name: 'invalid geometry',
+      check: 'invalid_landmarks',
+      invalidate: (landmarks) => {
+        landmarks[27] = { ...landmarks[25] };
+        landmarks[28] = { ...landmarks[26] };
+      },
+    },
+  ];
+
+  for (const failure of squatReliabilityFailures) {
+    it(`reports ${failure.name} and discards an in-progress squat`, () => {
+      const tracker = new SquatTracker();
+      tracker.processFrame(makeSquatLandmarks(170));
+      tracker.processFrame(makeSquatLandmarks(130));
+
+      const invalid = makeSquatLandmarks(140);
+      failure.invalidate(invalid);
+      const result = tracker.processFrame(invalid);
+
+      expect(result.measurement_reliable).toBe(false);
+      expect(result.current_phase).toBe('unreliable');
+      expect(result.movement_checks).toContain(failure.check);
+      expect(result.movement_checks).not.toContain('insufficient_squat_depth');
+      expect(result.repetitions).toBe(0);
+
+      const returned = tracker.processFrame(makeSquatLandmarks(170));
+      expect(returned.repetitions).toBe(0);
+      expect(returned.current_phase).toBe('idle');
+      expect(returned.movement_checks).not.toContain('insufficient_squat_depth');
+    });
+  }
 
   it('discards an incomplete squat after invalid knee geometry', () => {
     const tracker = new SquatTracker();
@@ -363,6 +473,146 @@ describe('ShoulderFlexionTracker State Machine', () => {
     res = tracker.processFrame(makeShoulderLandmarks(25));
     expect(res.current_phase).toBe('completed');
     expect(tracker.getRepCount()).toBe(1);
+    expect(res.movement_checks).not.toContain('incomplete_shoulder_raise');
+  });
+
+  it('reports an incomplete raise when a reliable attempt returns to rest before the peak', () => {
+    const tracker = new ShoulderFlexionTracker({ peakAngle: 120.0, restingAngle: 30.0 });
+
+    tracker.processFrame(makeShoulderLandmarks(20));
+    const raising = tracker.processFrame(makeShoulderLandmarks(80));
+    expect(raising.current_phase).toBe('eccentric');
+    expect(raising.movement_checks).not.toContain('incomplete_shoulder_raise');
+
+    const returned = tracker.processFrame(makeShoulderLandmarks(25));
+    expect(returned.current_phase).toBe('idle');
+    expect(returned.movement_checks).toContain('incomplete_shoulder_raise');
+    expect(returned.repetitions).toBe(0);
+  });
+
+  it('does not report incomplete raises during static resting frames', () => {
+    const tracker = new ShoulderFlexionTracker();
+
+    for (let frame = 0; frame < 5; frame++) {
+      const result = tracker.processFrame(makeShoulderLandmarks(20));
+      expect(result.movement_checks).not.toContain('incomplete_shoulder_raise');
+      expect(result.repetitions).toBe(0);
+    }
+  });
+
+  it('does not report shoulder asymmetry for similar angles', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 20 });
+
+    const result = tracker.processFrame(makeShoulderLandmarks(80, 0.95, 80));
+
+    expect(result.measurement_reliable).toBe(true);
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it('does not report shoulder asymmetry for a difference below the configured threshold', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 25 });
+
+    const result = tracker.processFrame(makeShoulderLandmarks(80, 0.95, 100));
+
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it('reports shoulder asymmetry when the difference exceeds the configured threshold', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 20 });
+
+    const result = tracker.processFrame(makeShoulderLandmarks(70, 0.95, 95));
+
+    expect(result.measurement_reliable).toBe(true);
+    expect(result.movement_checks).toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it.each([
+    ['left', 11],
+    ['right', 12],
+  ] as const)('does not report shoulder asymmetry when the %s side is missing', (_side, missingIndex) => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 10 });
+    const landmarks = makeShoulderLandmarks(60, 0.95, 120);
+    delete landmarks[missingIndex];
+
+    const result = tracker.processFrame(landmarks);
+
+    expect(result.measurement_reliable).toBe(false);
+    expect(result.movement_checks).toContain('missing_landmarks');
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it('does not report shoulder asymmetry when either side has low visibility', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 10 });
+    const landmarks = makeShoulderLandmarks(60, 0.95, 120);
+    landmarks[14].visibility = 0.3;
+
+    const result = tracker.processFrame(landmarks);
+
+    expect(result.measurement_reliable).toBe(false);
+    expect(result.movement_checks).toContain('low_visibility_arms');
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it.each([
+    ['invalid coordinates', (landmarks: Landmark[]) => { landmarks[13].x = Number.NaN; }, 'invalid_coordinates'],
+    ['invalid visibility', (landmarks: Landmark[]) => { landmarks[14].visibility = Number.NaN; }, 'invalid_visibility'],
+  ])('does not report shoulder asymmetry for %s', (_failure, invalidate, expectedCheck) => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 10 });
+    const landmarks = makeShoulderLandmarks(60, 0.95, 120);
+    invalidate(landmarks);
+
+    const result = tracker.processFrame(landmarks);
+
+    expect(result.measurement_reliable).toBe(false);
+    expect(result.movement_checks).toContain(expectedCheck);
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it('does not report shoulder asymmetry when either side has degenerate angle geometry', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 10 });
+    const landmarks = makeShoulderLandmarks(60, 0.95, 120);
+    landmarks[13] = { ...landmarks[11] };
+
+    const result = tracker.processFrame(landmarks);
+
+    expect(result.measurement_reliable).toBe(false);
+    expect(result.movement_checks).toContain('invalid_landmarks');
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+  });
+
+  it('preserves reliability feedback without emitting shoulder asymmetry for an unreliable side', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 10 });
+    const landmarks = makeShoulderLandmarks(60, 0.95, 120);
+    landmarks[23].visibility = 0.2;
+
+    const result = tracker.processFrame(landmarks);
+
+    expect(result.measurement_reliable).toBe(false);
+    expect(result.movement_checks).toContain('low_visibility_arms');
+    expect(result.movement_checks).not.toContain('asymmetrical_shoulder_flexion');
+    expect(result.current_phase).toBe('unreliable');
+  });
+
+  it('does not alter shoulder repetition counting when asymmetry feedback is present', () => {
+    const tracker = new ShoulderFlexionTracker({ asymmetryThreshold: 20 });
+
+    tracker.processFrame(makeShoulderLandmarks(20, 0.95, 20));
+    const raising = tracker.processFrame(makeShoulderLandmarks(80, 0.95, 70));
+    expect(raising.repetitions).toBe(0);
+    expect(raising.current_phase).toBe('eccentric');
+
+    const peak = tracker.processFrame(makeShoulderLandmarks(130, 0.95, 100));
+    expect(peak.movement_checks).toContain('asymmetrical_shoulder_flexion');
+    expect(peak.repetitions).toBe(0);
+    expect(peak.current_phase).toBe('inflection');
+
+    const lowering = tracker.processFrame(makeShoulderLandmarks(60, 0.95, 45));
+    expect(lowering.repetitions).toBe(0);
+    expect(lowering.current_phase).toBe('concentric');
+
+    const returned = tracker.processFrame(makeShoulderLandmarks(20, 0.95, 20));
+    expect(returned.repetitions).toBe(1);
+    expect(returned.current_phase).toBe('completed');
   });
 
   it('counts consecutive complete shoulder raises', () => {
@@ -403,14 +653,70 @@ describe('ShoulderFlexionTracker State Machine', () => {
   it('discards an incomplete shoulder raise after an unreliable frame', () => {
     const tracker = new ShoulderFlexionTracker();
     tracker.processFrame(makeShoulderLandmarks(20));
-    tracker.processFrame(makeShoulderLandmarks(130));
+    tracker.processFrame(makeShoulderLandmarks(80));
 
-    expect(tracker.processFrame(null).measurement_reliable).toBe(false);
+    const unreliable = tracker.processFrame(null);
+    expect(unreliable.measurement_reliable).toBe(false);
+    expect(unreliable.movement_checks).not.toContain('incomplete_shoulder_raise');
     const result = tracker.processFrame(makeShoulderLandmarks(20));
 
     expect(result.repetitions).toBe(0);
     expect(result.current_phase).toBe('idle');
+    expect(result.movement_checks).not.toContain('incomplete_shoulder_raise');
   });
+
+  const shoulderReliabilityFailures: Array<{
+    name: string;
+    check: string;
+    invalidate: (landmarks: Landmark[]) => void;
+  }> = [
+    {
+      name: 'missing landmarks',
+      check: 'missing_landmarks',
+      invalidate: (landmarks) => { delete landmarks[11]; },
+    },
+    {
+      name: 'low visibility',
+      check: 'low_visibility_arms',
+      invalidate: (landmarks) => { landmarks[11].visibility = 0.3; },
+    },
+    {
+      name: 'invalid coordinates',
+      check: 'invalid_coordinates',
+      invalidate: (landmarks) => { landmarks[11].x = Number.NaN; },
+    },
+    {
+      name: 'invalid geometry',
+      check: 'invalid_landmarks',
+      invalidate: (landmarks) => {
+        landmarks[13] = { ...landmarks[11] };
+        landmarks[14] = { ...landmarks[12] };
+      },
+    },
+  ];
+
+  for (const failure of shoulderReliabilityFailures) {
+    it(`reports ${failure.name} and discards an in-progress shoulder raise`, () => {
+      const tracker = new ShoulderFlexionTracker();
+      tracker.processFrame(makeShoulderLandmarks(20));
+      tracker.processFrame(makeShoulderLandmarks(80));
+
+      const invalid = makeShoulderLandmarks(90);
+      failure.invalidate(invalid);
+      const result = tracker.processFrame(invalid);
+
+      expect(result.measurement_reliable).toBe(false);
+      expect(result.current_phase).toBe('unreliable');
+      expect(result.movement_checks).toContain(failure.check);
+      expect(result.movement_checks).not.toContain('incomplete_shoulder_raise');
+      expect(result.repetitions).toBe(0);
+
+      const returned = tracker.processFrame(makeShoulderLandmarks(20));
+      expect(returned.repetitions).toBe(0);
+      expect(returned.current_phase).toBe('idle');
+      expect(returned.movement_checks).not.toContain('incomplete_shoulder_raise');
+    });
+  }
 
   it('discards an incomplete shoulder raise after invalid selected-arm geometry', () => {
     const tracker = new ShoulderFlexionTracker({}, 'left');

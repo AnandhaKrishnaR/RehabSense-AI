@@ -22,6 +22,23 @@ import {
 } from 'lucide-react';
 import { Landmark } from '../movement/geometry';
 
+function formatMovementCheck(check: string): string {
+  const messages: Record<string, string> = {
+    asymmetrical_knee_flexion: 'Knee angles differ between sides.',
+    asymmetrical_shoulder_flexion: 'Your arms appear to be raising unevenly. Try to move both arms smoothly and evenly.',
+    incomplete_shoulder_raise: 'Raise your arm to the target height before lowering it.',
+    insufficient_squat_depth: 'Squat deeper before returning to standing.',
+    invalid_coordinates: 'Pose coordinates are invalid. Reposition yourself in the camera view.',
+    invalid_landmarks: 'Joint geometry is invalid. Reposition yourself and try again.',
+    invalid_visibility: 'Pose visibility data is invalid. Reposition yourself in the camera view.',
+    low_visibility_arms: 'Arm landmarks are obscured or below the visibility threshold.',
+    low_visibility_legs: 'Leg landmarks are obscured or below the visibility threshold.',
+    missing_landmarks: 'Required pose landmarks are missing. Make sure your full pose is in view.',
+  };
+
+  return messages[check] ?? check.replace(/_/g, ' ');
+}
+
 export function ExerciseSessionView() {
   const [exercises, setExercises] = useState<ExerciseDefinition[]>(DEMO_EXERCISES);
   const [selectedExerciseId, setSelectedExerciseId] = useState<CanonicalExerciseId>('bodyweight_squat');
@@ -529,7 +546,7 @@ export function ExerciseSessionView() {
           {movementResult && (
             <div role="status" style={{ marginTop: '0.65rem', padding: '0.65rem 0.8rem', borderRadius: '6px', background: movementResult.movement_checks.length ? '#fffbeb' : '#f0fdf4', color: movementResult.movement_checks.length ? '#92400e' : '#166534', fontSize: '0.85rem' }}>
               {movementResult.movement_checks.length
-                ? movementResult.movement_checks.map((check) => check.replace(/_/g, ' ')).join(' · ')
+                ? movementResult.movement_checks.map(formatMovementCheck).join(' · ')
                 : 'No movement feedback flags.'}
             </div>
           )}

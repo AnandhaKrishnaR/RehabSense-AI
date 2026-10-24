@@ -21,6 +21,7 @@ export class SquatTracker {
   private currentPhase: MovementPhase = 'idle';
   private repCount = 0;
   private reachedInflection = false;
+  private startedDescent = false;
 
   constructor(config: Partial<SquatConfig> = {}) {
     this.config = { ...DEFAULT_SQUAT_CONFIG, ...config };
@@ -30,6 +31,7 @@ export class SquatTracker {
     this.currentPhase = 'idle';
     this.repCount = 0;
     this.reachedInflection = false;
+    this.startedDescent = false;
   }
 
   public getRepCount(): number {
@@ -43,6 +45,7 @@ export class SquatTracker {
   public discardIncompleteMovement(): void {
     this.currentPhase = 'idle';
     this.reachedInflection = false;
+    this.startedDescent = false;
   }
 
   public processFrame(landmarks: Landmark[] | null | undefined): MovementResult {
@@ -52,6 +55,11 @@ export class SquatTracker {
 
     if (!Array.isArray(landmarks) || landmarks.length < 29 || !visibilityCheck.reliable) {
       this.discardIncompleteMovement();
+      const movementChecks: string[] = [];
+      if (visibilityCheck.missingIndices.length > 0) movementChecks.push('missing_landmarks');
+      if (visibilityCheck.lowVisibilityIndices.length > 0) movementChecks.push('low_visibility_legs');
+      if (visibilityCheck.invalidCoordinateIndices.length > 0) movementChecks.push('invalid_coordinates');
+      if (visibilityCheck.invalidVisibilityIndices.length > 0) movementChecks.push('invalid_visibility');
       return {
         exercise: 'bodyweight_squat',
         repetitions: this.repCount,
@@ -68,7 +76,7 @@ export class SquatTracker {
           left_hip: getVisibility(safeLandmarks[23]),
           right_hip: getVisibility(safeLandmarks[24]),
         },
-        movement_checks: visibilityCheck.missingIndices.length > 0 ? ['low_visibility_legs'] : ['invalid_landmarks'],
+        movement_checks: movementChecks,
         current_phase: 'unreliable',
         captured_at: timestamp,
       };
@@ -114,16 +122,23 @@ export class SquatTracker {
         this.repCount += 1;
         this.currentPhase = 'completed';
         this.reachedInflection = false;
+      } else if (this.startedDescent) {
+        movementChecks.push('insufficient_squat_depth');
+        this.currentPhase = 'idle';
       } else if (this.currentPhase !== 'completed') {
         this.currentPhase = 'idle';
       }
+      this.startedDescent = false;
     } else if (avgKneeAngle <= this.config.inflectionAngle) {
       this.currentPhase = 'inflection';
       this.reachedInflection = true;
+      this.startedDescent = true;
     } else if (this.reachedInflection && avgKneeAngle > this.config.inflectionAngle) {
       this.currentPhase = 'concentric';
+      this.startedDescent = true;
     } else if (!this.reachedInflection && avgKneeAngle < this.config.standingAngle) {
       this.currentPhase = 'eccentric';
+      this.startedDescent = true;
     }
 
     return {

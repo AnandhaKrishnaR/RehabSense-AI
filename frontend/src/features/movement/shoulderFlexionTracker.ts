@@ -5,12 +5,14 @@ export interface ShoulderFlexionConfig {
   peakAngle: number;    // Demo peak target (e.g. 120 deg)
   restingAngle: number; // Arm at side threshold (e.g. 30 deg)
   minVisibility: number;// Landmark visibility cutoff (e.g. 0.65)
+  asymmetryThreshold: number; // Provisional engineering deadband; requires domain review.
 }
 
 export const DEFAULT_SHOULDER_CONFIG: ShoulderFlexionConfig = {
   peakAngle: 120.0,
   restingAngle: 30.0,
   minVisibility: 0.65,
+  asymmetryThreshold: 20.0,
 };
 
 const LEFT_SHOULDER_LANDMARKS = [11, 13, 23];
@@ -24,6 +26,7 @@ export class ShoulderFlexionTracker {
   private currentPhase: MovementPhase = 'idle';
   private repCount = 0;
   private reachedPeak = false;
+  private startedRaising = false;
   private activeArm: 'left' | 'right' | 'both' = 'both';
 
   constructor(config: Partial<ShoulderFlexionConfig> = {}, activeArm: 'left' | 'right' | 'both' = 'both') {
@@ -35,6 +38,7 @@ export class ShoulderFlexionTracker {
     this.currentPhase = 'idle';
     this.repCount = 0;
     this.reachedPeak = false;
+    this.startedRaising = false;
   }
 
   public getRepCount(): number {
@@ -48,6 +52,7 @@ export class ShoulderFlexionTracker {
   public discardIncompleteMovement(): void {
     this.currentPhase = 'idle';
     this.reachedPeak = false;
+    this.startedRaising = false;
   }
 
   public processFrame(landmarks: Landmark[] | null | undefined): MovementResult {
@@ -78,6 +83,12 @@ export class ShoulderFlexionTracker {
 
     if (!measurementReliable) {
       this.discardIncompleteMovement();
+      const movementChecks: string[] = [];
+      if (visibilityCheck.missingIndices.length > 0) movementChecks.push('missing_landmarks');
+      if (visibilityCheck.lowVisibilityIndices.length > 0) movementChecks.push('low_visibility_arms');
+      if (visibilityCheck.invalidCoordinateIndices.length > 0) movementChecks.push('invalid_coordinates');
+      if (visibilityCheck.invalidVisibilityIndices.length > 0) movementChecks.push('invalid_visibility');
+      if (visibilityCheck.reliable) movementChecks.push('invalid_landmarks');
       return {
         exercise: 'shoulder_flexion',
         repetitions: this.repCount,
@@ -92,7 +103,7 @@ export class ShoulderFlexionTracker {
           left_elbow: getVisibility(safeLandmarks[13]),
           right_elbow: getVisibility(safeLandmarks[14]),
         },
-        movement_checks: visibilityCheck.missingIndices.length > 0 ? ['low_visibility_arms'] : ['invalid_landmarks'],
+        movement_checks: movementChecks,
         current_phase: 'unreliable',
         captured_at: timestamp,
       };
@@ -105,22 +116,38 @@ export class ShoulderFlexionTracker {
         : Math.max(leftAngle, rightAngle);
 
     const movementChecks: string[] = [];
+    if (
+      leftVisibility.reliable &&
+      rightVisibility.reliable &&
+      Number.isFinite(leftAngle) &&
+      Number.isFinite(rightAngle) &&
+      Math.abs(leftAngle - rightAngle) > this.config.asymmetryThreshold
+    ) {
+      movementChecks.push('asymmetrical_shoulder_flexion');
+    }
 
     if (trackingAngle <= this.config.restingAngle) {
       if (this.currentPhase === 'concentric' && this.reachedPeak) {
         this.repCount += 1;
         this.currentPhase = 'completed';
         this.reachedPeak = false;
+      } else if (this.startedRaising && !this.reachedPeak) {
+        movementChecks.push('incomplete_shoulder_raise');
+        this.currentPhase = 'idle';
       } else if (this.currentPhase !== 'completed') {
         this.currentPhase = 'idle';
       }
+      this.startedRaising = false;
     } else if (trackingAngle >= this.config.peakAngle) {
       this.currentPhase = 'inflection';
       this.reachedPeak = true;
+      this.startedRaising = true;
     } else if (this.reachedPeak && trackingAngle < this.config.peakAngle) {
       this.currentPhase = 'concentric';
+      this.startedRaising = true;
     } else if (!this.reachedPeak && trackingAngle > this.config.restingAngle) {
       this.currentPhase = 'eccentric';
+      this.startedRaising = true;
     }
 
     return {
