@@ -1,7 +1,8 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.core.management import call_command
 from rest_framework import status
-from apps.rehabilitation.models import Exercise
+from apps.rehabilitation.models import Exercise, TherapyPlan
 
 class ExerciseCatalogTests(TestCase):
     def setUp(self):
@@ -48,3 +49,44 @@ class ExerciseCatalogTests(TestCase):
         url = reverse('rehabilitation:exercise-detail', kwargs={'exercise_id': 'bench_press'})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_idempotent_exercise_seed_command(self):
+        # Call management command twice to ensure idempotency
+        call_command('seed_exercises')
+        call_command('seed_exercises')
+        self.assertEqual(Exercise.objects.count(), 2)
+        self.assertTrue(Exercise.objects.filter(id='bodyweight_squat').exists())
+        self.assertTrue(Exercise.objects.filter(id='shoulder_flexion').exists())
+
+    def test_therapy_plans_create_and_approval_filtering(self):
+        url = reverse('rehabilitation:therapy-plan-list-create')
+        payload = {
+            "patient_name": "Test Patient",
+            "clinician_name": "Dr. Sarah Clinician",
+            "notes": "Post-op knee plan",
+            "items": [
+                {
+                    "exercise_id": "bodyweight_squat",
+                    "target_sets": 2,
+                    "target_reps": 10,
+                    "notes": "Safe depth"
+                }
+            ]
+        }
+        response = self.client.post(url, data=payload, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['approval_status'], 'draft')
+        self.assertFalse(response.data['is_approved'])
+
+        # Filter by approved plans
+        resp_approved = self.client.get(f"{url}?approved=true")
+        self.assertEqual(len(resp_approved.data), 0)
+
+        # Mark plan as approved
+        plan = TherapyPlan.objects.get(id=response.data['id'])
+        plan.is_approved = True
+        plan.approval_status = 'approved'
+        plan.save()
+
+        resp_approved_after = self.client.get(f"{url}?approved=true")
+        self.assertEqual(len(resp_approved_after.data), 1)

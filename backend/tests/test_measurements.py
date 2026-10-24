@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.contrib.auth.models import User
 from rest_framework import status
 from apps.rehabilitation.models import Exercise, RehabilitationSession
 from apps.movement.models import MovementMeasurement
@@ -16,13 +17,18 @@ class MovementMeasurementEndpointTests(TestCase):
             target_joints=['left_knee', 'right_knee'],
             demo_parameters={'inflection_knee_angle': 100.0},
         )
+        self.user1 = User.objects.create_user(username='patient1', password='password123')
+        self.user2 = User.objects.create_user(username='patient2', password='password123')
         self.session = RehabilitationSession.objects.create(
+            user=self.user1,
+            patient_identifier='patient1',
             exercise=self.exercise,
             target_reps=10,
             status='in_progress',
         )
 
     def test_submit_valid_measurement(self):
+        self.client.force_login(self.user1)
         url = reverse('movement:session-measurement-create', kwargs={'session_id': self.session.id})
         payload = {
             "exercise": "bodyweight_squat",
@@ -46,6 +52,7 @@ class MovementMeasurementEndpointTests(TestCase):
         self.assertEqual(self.session.completed_reps, 3)
 
     def test_submit_unreliable_measurement_preserves_reliability_status(self):
+        self.client.force_login(self.user1)
         url = reverse('movement:session-measurement-create', kwargs={'session_id': self.session.id})
         payload = {
             "exercise": "bodyweight_squat",
@@ -62,6 +69,7 @@ class MovementMeasurementEndpointTests(TestCase):
         self.assertIn("low_visibility_knee", response.data['movement_checks'])
 
     def test_submit_measurement_mismatched_exercise_returns_400(self):
+        self.client.force_login(self.user1)
         url = reverse('movement:session-measurement-create', kwargs={'session_id': self.session.id})
         payload = {
             "exercise": "shoulder_flexion", # Mismatched with bodyweight_squat session
@@ -72,6 +80,42 @@ class MovementMeasurementEndpointTests(TestCase):
         response = self.client.post(url, data=payload, content_type='application/json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data.get('error'), 'exercise_mismatch')
+
+    def test_submit_invalid_repetitions_negative_returns_400(self):
+        self.client.force_login(self.user1)
+        url = reverse('movement:session-measurement-create', kwargs={'session_id': self.session.id})
+        payload = {
+            "exercise": "bodyweight_squat",
+            "repetitions": -1,
+            "joint_angles": {},
+            "visibility": {},
+        }
+        response = self.client.post(url, data=payload, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_submit_invalid_angle_returns_400(self):
+        self.client.force_login(self.user1)
+        url = reverse('movement:session-measurement-create', kwargs={'session_id': self.session.id})
+        payload = {
+            "exercise": "bodyweight_squat",
+            "repetitions": 1,
+            "joint_angles": {"left_knee": 450.0}, # Out of bounds
+            "visibility": {},
+        }
+        response = self.client.post(url, data=payload, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_submit_measurement_other_user_session_denied(self):
+        self.client.force_login(self.user2)
+        url = reverse('movement:session-measurement-create', kwargs={'session_id': self.session.id})
+        payload = {
+            "exercise": "bodyweight_squat",
+            "repetitions": 1,
+            "joint_angles": {},
+            "visibility": {},
+        }
+        response = self.client.post(url, data=payload, content_type='application/json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_submit_measurement_to_nonexistent_session_returns_404(self):
         url = reverse('movement:session-measurement-create', kwargs={'session_id': uuid.uuid4()})

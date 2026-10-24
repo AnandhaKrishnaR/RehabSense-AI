@@ -1,11 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiClient, DEMO_EXERCISES } from '../../services/apiClient';
-import { ExerciseDefinition, SessionRecord, SymptomReportPayload, SafetyEvaluationResponse } from '../../types/api';
+import { ExerciseDefinition, SessionRecord, SymptomReportPayload, SafetyEvaluationResponse, VoiceTemplate } from '../../types/api';
 import { CanonicalExerciseId, MovementResult } from '../../types/vision';
 import { PhysiotherapyAvatar } from '../avatar/PhysiotherapyAvatar';
 import { usePoseLandmarker } from '../movement/usePoseLandmarker';
 import { formatAverageKneeAngle } from '../movement/angleDisplay';
 import { MalayalamVoiceDialog } from '../voice/MalayalamVoiceDialog';
+import { VoiceSettingsPanel } from '../voice/VoiceSettingsPanel';
+import { loadVoicePreferences } from '../voice/voicePreferences';
+import {
+  getMovementCoachStartMessage,
+  getMovementCoachMessage,
+  movementResultHasChanged,
+  speakMalayalam,
+} from '../voice/movementVoiceCoach';
 import {
   Play,
   Pause,
@@ -52,10 +60,14 @@ export function ExerciseSessionView() {
   const [showVoiceDialog, setShowVoiceDialog] = useState(false);
   const [spokenFeedback, setSpokenFeedback] = useState<string | null>(null);
   const [sessionSummary, setSessionSummary] = useState<any | null>(null);
+  const [voiceTemplates, setVoiceTemplates] = useState<Record<string, VoiceTemplate>>({});
+  const [voicePlaybackError, setVoicePlaybackError] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const landmarkCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const measurementThrottleRef = useRef<number>(0);
+  const previousMovementResultRef = useRef<MovementResult | null>(null);
+  const lastCoachMessageAtRef = useRef(0);
 
   // Fetch exercises from API
   useEffect(() => {
@@ -64,6 +76,15 @@ export function ExerciseSessionView() {
         setExercises(list);
       }
     });
+    apiClient.getVoiceTemplates().then((response) => {
+      if (response?.templates) setVoiceTemplates(response.templates);
+    });
+  }, []);
+
+  useEffect(() => {
+    const handlePlaybackError = () => setVoicePlaybackError(true);
+    window.addEventListener('rehabsense-voice-playback-error', handlePlaybackError);
+    return () => window.removeEventListener('rehabsense-voice-playback-error', handlePlaybackError);
   }, []);
 
   const selectedExercise = exercises.find((e) => e.id === selectedExerciseId) || exercises[0];
@@ -81,8 +102,28 @@ export function ExerciseSessionView() {
 
   // Callback for pose landmarker stream
   const handleMovementResult = (result: MovementResult) => {
+    const previousResult = previousMovementResultRef.current;
     setMovementResult(result);
     setRepetitions(result.repetitions);
+    if (previousResult && movementResultHasChanged(result, previousResult)) {
+      const message = getMovementCoachMessage(
+        result.exercise,
+        result.current_phase,
+        result.repetitions,
+        previousResult.current_phase,
+        previousResult.repetitions,
+        result.measurement_reliable,
+        result.movement_checks,
+        voiceTemplates,
+        loadVoicePreferences().speechLanguage,
+      );
+      const now = Date.now();
+      if (message && now - lastCoachMessageAtRef.current >= 1500) {
+        speakMalayalam(message);
+        lastCoachMessageAtRef.current = now;
+      }
+    }
+    previousMovementResultRef.current = result;
 
     // Periodically sync measurements with backend (every 2.5 seconds or on rep completion)
     const now = Date.now();
@@ -174,6 +215,14 @@ export function ExerciseSessionView() {
 
   // Start new exercise session
   const startSession = async () => {
+    setVoicePlaybackError(false);
+    const preferences = loadVoicePreferences();
+    speakMalayalam(getMovementCoachStartMessage(
+      selectedExerciseId,
+      preferences.speechLanguage,
+      voiceTemplates,
+    ));
+
     try {
       const sess = await apiClient.createSession({
         exercise_id: selectedExerciseId,
@@ -188,6 +237,8 @@ export function ExerciseSessionView() {
       setSafetyAlert(null);
       setSessionSummary(null);
       handleLandmarks(null);
+      previousMovementResultRef.current = null;
+      lastCoachMessageAtRef.current = 0;
 
       // Start webcam if video element exists
       if (videoRef.current && !isSimulated) {
@@ -229,15 +280,24 @@ export function ExerciseSessionView() {
   const handleSymptomSubmitted = (symptom: SymptomReportPayload) => {
     setShowVoiceDialog(false);
 
-    // Evaluate safety with reported pain score
+    // Evaluate safety with reported pain score and symptoms
     if (currentSession) {
+      const isWorsening = Boolean((symptom.pain_score ?? 0) >= 6 || (symptom.transcript && symptom.transcript.includes('കൂടുന്നു')));
       apiClient.evaluateSafety({
         session_id: currentSession.id,
         pain_score: symptom.pain_score,
+        worsening_pain: isWorsening,
         reported_symptoms: [symptom.difficulty, symptom.transcript],
       }).then((evaluation) => {
         if (evaluation.review_required) {
           setSafetyAlert(evaluation);
+          setSessionPaused(true);
+          const preferences = loadVoicePreferences();
+          const safetyVoiceMsg = preferences.speechLanguage === 'en-IN'
+            ? 'Stop the exercise and follow your physiotherapist instructions.'
+            : voiceTemplates.safety_pause_pain?.text
+              || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.';
+          speakMalayalam(safetyVoiceMsg, false, { textLanguage: preferences.speechLanguage });
         }
       });
     }
@@ -245,6 +305,11 @@ export function ExerciseSessionView() {
 
   return (
     <div>
+      {voicePlaybackError && (
+        <div role="alert" style={{ marginBottom: '0.75rem', color: '#991b1b' }}>
+          Voice audio could not be played. Check the configured speech provider or an available browser voice.
+        </div>
+      )}
       {/* Exercise Selection Header */}
       <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -310,6 +375,13 @@ export function ExerciseSessionView() {
         </div>
       </div>
 
+      {selectedExercise && (
+        <VoiceSettingsPanel
+          englishText={selectedExercise.instructions_en}
+          malayalamText={selectedExercise.instructions_ml}
+        />
+      )}
+
       {/* Safety Alert Banner */}
       {safetyAlert && safetyAlert.review_required && (
         <div style={{
@@ -321,16 +393,32 @@ export function ExerciseSessionView() {
           display: 'flex',
           alignItems: 'center',
           gap: '1rem',
+          flexWrap: 'wrap',
         }}>
           <AlertTriangle size={28} color="#ef4444" />
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: '220px' }}>
             <h4 style={{ color: '#991b1b', margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>
-              Physiotherapist Review Flagged
+              Physiotherapist Review Flagged (സുരക്ഷാ മുന്നറിയിപ്പ്)
             </h4>
-            <p style={{ color: '#7f1d1d', margin: 0, fontSize: '0.85rem' }}>
-              {safetyAlert.feedback[0] || 'High pain or symptom increase detected. Please pause and rest.'}
+            <p style={{ color: '#7f1d1d', margin: '0.2rem 0 0', fontSize: '0.85rem' }}>
+              {safetyAlert.feedback[0] || 'വേദന കൂടുന്നതായി കാണുന്നു. വ്യായാമം താൽക്കാലികമായി നിർത്തി വിശ്രമിക്കുക.'}
             </p>
           </div>
+          <button
+            type="button"
+            className="btn btn-danger"
+            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            onClick={() => {
+              const preferences = loadVoicePreferences();
+              const safetyVoiceMsg = preferences.speechLanguage === 'en-IN'
+                ? 'Stop the exercise and follow your physiotherapist instructions.'
+                : voiceTemplates.safety_pause_pain?.text
+                  || 'വ്യായാമം താൽക്കാലികമായി നിർത്തുക. നിങ്ങളുടെ ഫിസിയോതെറാപ്പിസ്റ്റ് പറഞ്ഞതുപോലെ ചെയ്യുക.';
+              speakMalayalam(safetyVoiceMsg, false, { textLanguage: preferences.speechLanguage });
+            }}
+          >
+            <Volume2 size={16} /> Listen to Audio
+          </button>
           <span className="badge badge-danger">Review Required</span>
         </div>
       )}
@@ -363,8 +451,28 @@ export function ExerciseSessionView() {
 
           {/* Bilingual Instructions Box */}
           <div style={{ marginTop: '1rem', background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#0369a1', fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.3rem' }}>
-              <Info size={14} /> Clinical Movement Tips:
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#0369a1', fontSize: '0.82rem', fontWeight: 600 }}>
+                <Info size={14} /> Clinical Movement Tips:
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline"
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                onClick={() => {
+                  const preferences = loadVoicePreferences();
+                  speakMalayalam(
+                    preferences.speechLanguage === 'en-IN'
+                      ? selectedExercise.instructions_en
+                      : selectedExercise.instructions_ml,
+                    false,
+                    { textLanguage: preferences.speechLanguage },
+                  );
+                }}
+                title="Listen to exercise instructions"
+              >
+                <Volume2 size={13} color="#0284c7" /> Listen to Audio
+              </button>
             </div>
             <p style={{ fontSize: '0.85rem', margin: '0 0 0.4rem', color: 'var(--text-main)' }}>
               <strong>English:</strong> {selectedExercise.instructions_en}

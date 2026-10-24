@@ -147,8 +147,8 @@ export function ProceduralHumanAvatar({
       }
       // Arms elevate forward for clinical balance
       if (leftArmRef.current && rightArmRef.current) {
-        leftArmRef.current.rotation.set(-hipFlexionRad * 0.88 - 0.15, 0, 0);
-        rightArmRef.current.rotation.set(-hipFlexionRad * 0.88 - 0.15, 0, 0);
+        leftArmRef.current.rotation.set(-hipFlexionRad * 0.88 - 0.15, 0, -Math.PI / 2);
+        rightArmRef.current.rotation.set(-hipFlexionRad * 0.88 - 0.15, 0, Math.PI / 2);
       }
       if (leftForeArmRef.current && rightForeArmRef.current) {
         leftForeArmRef.current.rotation.set(-0.15, 0, 0);
@@ -173,8 +173,8 @@ export function ProceduralHumanAvatar({
 
       // Arms elevate smoothly forward and up
       if (leftArmRef.current && rightArmRef.current) {
-        leftArmRef.current.rotation.set(-armElevationRad, 0, 0);
-        rightArmRef.current.rotation.set(-armElevationRad, 0, 0);
+        leftArmRef.current.rotation.set(0, 0, -Math.PI / 2 - armElevationRad);
+        rightArmRef.current.rotation.set(0, 0, Math.PI / 2 + armElevationRad);
       }
       if (leftForeArmRef.current && rightForeArmRef.current) {
         leftForeArmRef.current.rotation.set(0, 0, 0);
@@ -183,41 +183,40 @@ export function ProceduralHumanAvatar({
     }
   });
 
-  // Shared glossy shell gives the character the smooth toy-like finish of the reference.
   const materials = useMemo(() => {
-    const shell = new THREE.MeshPhysicalMaterial({
-      color: '#176fbd',
-      roughness: 0.18,
-      metalness: 0.16,
-      clearcoat: 0.95,
-      clearcoatRoughness: 0.12,
-    });
+    const skin = new THREE.MeshPhysicalMaterial({ color: '#d8b99a', roughness: 0.48, clearcoat: 0.12 });
+    const hair = new THREE.MeshPhysicalMaterial({ color: '#5a3b2d', roughness: 0.82 });
+    const shirt = new THREE.MeshPhysicalMaterial({ color: '#08a979', roughness: 0.32, clearcoat: 0.24 });
+    const pants = new THREE.MeshPhysicalMaterial({ color: '#1f2d49', roughness: 0.52 });
+    const shoes = new THREE.MeshPhysicalMaterial({ color: '#e1e7ea', roughness: 0.62 });
     const mat = new THREE.MeshStandardMaterial({
-      color: '#292b30',
+      color: '#dfe6e9',
       roughness: 0.9,
     });
     return {
-      skin: shell,
-      hair: shell,
-      shirt: shell,
-      pants: shell,
-      shoes: shell,
-      shoeSole: shell,
-      glasses: shell,
-      lenses: shell,
-      eyeWhite: shell,
-      eyePupil: shell,
-      lips: shell,
+      skin,
+      hair,
+      shirt,
+      pants,
+      shoes,
+      shoeSole: shoes,
+      glasses: hair,
+      lenses: skin,
+      eyeWhite: new THREE.MeshStandardMaterial({ color: '#f8f7f2', roughness: 0.5 }),
+      eyePupil: new THREE.MeshStandardMaterial({ color: '#172334', roughness: 0.35 }),
+      lips: new THREE.MeshStandardMaterial({ color: '#70413b', roughness: 0.6 }),
       mat,
     };
   }, []);
 
   return (
     <group scale={mirror ? [-1, 1, 1] : [1, 1, 1]}>
-      {/* Dark studio floor */}
       <group position={[0, 0, 0]}>
         <mesh position={[0, -0.012, 0]} rotation={[-Math.PI / 2, 0, 0]} material={materials.mat}>
           <planeGeometry args={[200, 200]} />
+        </mesh>
+        <mesh position={[0, 0.008, 0]} material={materials.mat}>
+          <cylinderGeometry args={[0.92, 0.92, 0.035, 64]} />
         </mesh>
       </group>
 
@@ -246,119 +245,51 @@ export function ProceduralHumanAvatar({
               <sphereGeometry args={[0.27, 40, 40]} />
             </mesh>
 
-            <group visible={false} position={[0, 0.2, 0]}>
-              {/* Cute Rounded Face */}
-              <mesh material={materials.skin} scale={[1.05, 1.12, 1.05]}>
-                <sphereGeometry args={[0.135, 28, 28]} />
-              </mesh>
-
-              {/* Ears with Pearl Earrings */}
+            <group position={[0, 0.2, 0]}>
               <group position={[-0.14, 0, 0]}>
                 <mesh material={materials.skin}>
                   <sphereGeometry args={[0.03, 16, 16]} />
-                </mesh>
-                <mesh position={[-0.01, -0.02, 0]} material={materials.shoes}>
-                  <sphereGeometry args={[0.012, 12, 12]} />
                 </mesh>
               </group>
               <group position={[0.14, 0, 0]}>
                 <mesh material={materials.skin}>
                   <sphereGeometry args={[0.03, 16, 16]} />
                 </mesh>
-                <mesh position={[0.01, -0.02, 0]} material={materials.shoes}>
-                  <sphereGeometry args={[0.012, 12, 12]} />
+              </group>
+
+              <group position={[0, 0.025, 0.247]}>
+                <mesh position={[-0.075, 0, 0]} material={materials.eyeWhite}>
+                  <sphereGeometry args={[0.032, 16, 16]} />
+                </mesh>
+                <mesh position={[-0.075, 0, 0.025]} material={materials.eyePupil}>
+                  <sphereGeometry args={[0.018, 16, 16]} />
+                </mesh>
+                <mesh position={[0.075, 0, 0]} material={materials.eyeWhite}>
+                  <sphereGeometry args={[0.032, 16, 16]} />
+                </mesh>
+                <mesh position={[0.075, 0, 0.025]} material={materials.eyePupil}>
+                  <sphereGeometry args={[0.018, 16, 16]} />
                 </mesh>
               </group>
 
-              {/* Eyes */}
-              <group position={[0, 0.02, 0.125]}>
-                {/* Left Eye */}
-                <mesh position={[-0.048, 0, 0]} material={materials.eyeWhite}>
-                  <sphereGeometry args={[0.022, 16, 16]} />
-                </mesh>
-                <mesh position={[-0.048, 0, 0.014]} material={materials.eyePupil}>
-                  <sphereGeometry args={[0.012, 16, 16]} />
-                </mesh>
-
-                {/* Right Eye */}
-                <mesh position={[0.048, 0, 0]} material={materials.eyeWhite}>
-                  <sphereGeometry args={[0.022, 16, 16]} />
-                </mesh>
-                <mesh position={[0.048, 0, 0.014]} material={materials.eyePupil}>
-                  <sphereGeometry args={[0.012, 16, 16]} />
-                </mesh>
-              </group>
-
-              {/* Pink / Coral Glasses (from uploaded image) */}
-              <group position={[0, 0.022, 0.135]}>
-                {/* Left Pink Rim */}
-                <mesh position={[-0.05, 0, 0]} material={materials.glasses}>
-                  <torusGeometry args={[0.039, 0.0055, 12, 24]} />
-                </mesh>
-                <mesh position={[-0.05, 0, 0]} material={materials.lenses}>
-                  <circleGeometry args={[0.036, 20]} />
-                </mesh>
-
-                {/* Right Pink Rim */}
-                <mesh position={[0.05, 0, 0]} material={materials.glasses}>
-                  <torusGeometry args={[0.039, 0.0055, 12, 24]} />
-                </mesh>
-                <mesh position={[0.05, 0, 0]} material={materials.lenses}>
-                  <circleGeometry args={[0.036, 20]} />
-                </mesh>
-
-                {/* Pink Bridge */}
-                <mesh position={[0, 0.008, 0]} material={materials.glasses}>
-                  <boxGeometry args={[0.024, 0.006, 0.006]} />
-                </mesh>
-
-                {/* Glasses Temples */}
-                <mesh position={[-0.095, 0.005, -0.06]} rotation={[0, -0.15, 0]} material={materials.glasses}>
-                  <boxGeometry args={[0.006, 0.006, 0.12]} />
-                </mesh>
-                <mesh position={[0.095, 0.005, -0.06]} rotation={[0, 0.15, 0]} material={materials.glasses}>
-                  <boxGeometry args={[0.006, 0.006, 0.12]} />
-                </mesh>
-              </group>
-
-              {/* Gentle Nose */}
-              <mesh position={[0, -0.015, 0.14]} rotation={[0.4, 0, 0]} material={materials.skin}>
-                <coneGeometry args={[0.016, 0.03, 16]} />
+              <mesh position={[0, -0.025, 0.265]} material={materials.skin}>
+                <sphereGeometry args={[0.025, 16, 16]} />
               </mesh>
 
-              {/* Warm Gentle Smile */}
-              <mesh position={[0, -0.055, 0.13]} rotation={[0, 0, Math.PI]} material={materials.lips}>
+              <mesh position={[0, -0.075, 0.256]} rotation={[0, 0, Math.PI]} material={materials.lips}>
                 <torusGeometry args={[0.024, 0.005, 8, 16, Math.PI]} />
               </mesh>
 
-              {/* Voluminous Fluffy White Hair (from uploaded reference picture) */}
-              <group position={[0, 0.03, -0.02]}>
-                {/* Hair Main Dome */}
-                <mesh scale={[1.14, 1.15, 1.18]} material={materials.hair}>
-                  <sphereGeometry args={[0.138, 24, 24]} />
-                </mesh>
-                {/* Left Side Hair Volume */}
-                <mesh position={[-0.09, 0.02, 0.02]} scale={[1, 1, 1.1]} material={materials.hair}>
-                  <sphereGeometry args={[0.075, 16, 16]} />
-                </mesh>
-                {/* Right Side Hair Volume */}
-                <mesh position={[0.09, 0.02, 0.02]} scale={[1, 1, 1.1]} material={materials.hair}>
-                  <sphereGeometry args={[0.075, 16, 16]} />
-                </mesh>
-                {/* Top Soft Curls */}
-                <mesh position={[0, 0.11, -0.02]} scale={[1.2, 0.8, 1.1]} material={materials.hair}>
-                  <sphereGeometry args={[0.075, 16, 16]} />
-                </mesh>
-                {/* Back of Head Hair */}
-                <mesh position={[0, -0.04, -0.09]} scale={[1.2, 1.1, 0.9]} material={materials.hair}>
-                  <sphereGeometry args={[0.08, 16, 16]} />
+              <group position={[0, 0, 0]}>
+                <mesh position={[0, 0.08, 0]} scale={[1.02, 0.78, 1.02]} material={materials.hair}>
+                  <sphereGeometry args={[0.275, 40, 32, 0, Math.PI * 2, 0, Math.PI / 2]} />
                 </mesh>
               </group>
             </group>
           </group>
 
           {/* Left Arm Assembly */}
-          <group ref={leftArmRef} position={[-0.26, 0.38, 0]}>
+          <group ref={leftArmRef} position={[-0.26, 0.38, 0]} rotation={[0, 0, -Math.PI / 2]}>
             {/* Shoulder */}
             <mesh material={materials.shirt}>
               <sphereGeometry args={[0.07, 16, 16]} />
@@ -382,7 +313,7 @@ export function ProceduralHumanAvatar({
           </group>
 
           {/* Right Arm Assembly */}
-          <group ref={rightArmRef} position={[0.26, 0.38, 0]}>
+          <group ref={rightArmRef} position={[0.26, 0.38, 0]} rotation={[0, 0, Math.PI / 2]}>
             {/* Shoulder */}
             <mesh material={materials.shirt}>
               <sphereGeometry args={[0.07, 16, 16]} />

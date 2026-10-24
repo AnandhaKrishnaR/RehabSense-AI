@@ -9,6 +9,7 @@ import {
   resolvePoseFrameSource,
   VIDEO_FRAME_STALE_TIMEOUT_MS,
 } from '../features/movement/videoFrameUtils';
+import { getMovementCoachMessage, getMovementCoachStartMessage, MOVEMENT_COACH_MESSAGES } from '../features/voice/movementVoiceCoach';
 
 describe('Movement Geometry and Calculations', () => {
   it('calculates a 90-degree right angle accurately', () => {
@@ -867,5 +868,64 @@ describe('ShoulderFlexionTracker State Machine', () => {
     const invalidResult = tracker.processFrame(invalidCoordinates);
     expect(invalidResult.measurement_reliable).toBe(false);
     expect(invalidResult.joint_angles.left_shoulder).toBeNull();
+  });
+});
+
+describe('Malayalam Movement Voice Coach', () => {
+  it('announces exercise setup instructions', () => {
+    expect(MOVEMENT_COACH_MESSAGES.bodyweight_squat.start).toContain('കാലുകൾ');
+    expect(MOVEMENT_COACH_MESSAGES.shoulder_flexion.start).toContain('കൈ');
+  });
+
+  it('uses English cues when English speech is selected', () => {
+    expect(getMovementCoachStartMessage('bodyweight_squat', 'en-IN')).toContain('Let us begin');
+    expect(getMovementCoachMessage(
+      'shoulder_flexion',
+      'eccentric',
+      0,
+      'idle',
+      0,
+      true,
+      [],
+      {},
+      'en-IN',
+    )).toContain('Raise your arm slowly');
+  });
+
+  it('announces phase transitions and completed repetitions', () => {
+    expect(getMovementCoachMessage(
+      'bodyweight_squat',
+      'eccentric',
+      0,
+      'idle',
+      0,
+      true,
+    )).toContain('താഴേക്ക്');
+
+    expect(getMovementCoachMessage(
+      'shoulder_flexion',
+      'completed',
+      5,
+      'concentric',
+      4,
+      true,
+    )).toContain('5');
+  });
+
+  it('announces unreliable tracking only once until tracking recovers', () => {
+    expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'idle', 0, false)).toContain('ചലനം');
+    expect(getMovementCoachMessage('bodyweight_squat', 'unreliable', 0, 'unreliable', 0, false)).toBeNull();
+  });
+
+  it('coaches the patient to slow down when movement checks fail', () => {
+    expect(getMovementCoachMessage(
+      'bodyweight_squat',
+      'eccentric',
+      0,
+      'idle',
+      0,
+      true,
+      ['asymmetrical_knee_flexion'],
+    )).toContain('പതുക്കെ');
   });
 });
